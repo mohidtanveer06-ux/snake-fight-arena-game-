@@ -1,0 +1,26 @@
+{
+  "name": "neon-dash-arena",
+  "version": "1.0.0",
+  "description": "A fast-paced 2D multiplayer neon arena browser game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js --watch server.js --watch public --ext js,html,css"
+  },
+  "keywords": [
+    "game",
+    "multiplayer",
+    "socket.io",
+    "canvas"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "playwright": "^1.62.1"
+  }
+}

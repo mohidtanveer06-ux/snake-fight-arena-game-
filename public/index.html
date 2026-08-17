@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>MT SNAKE FIGHT ARENA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="menu-screen" class="screen active">
+        <div class="menu-bg"></div>
+        <div class="menu-content">
+          <div class="title-block">
+            <div class="eyebrow">MULTIPLAYER BATTLE ARENA</div>
+            <h1>
+              <span class="mt">MT</span>
+              <span class="snake">SNAKE</span>
+              <span class="fight">FIGHT</span>
+              <span class="arena">ARENA</span>
+            </h1>
+          </div>
+
+          <div class="player-name-wrap">
+            <label for="username-input">Username</label>
+            <input id="username-input" type="text" maxlength="16" placeholder="Enter your name" />
+          </div>
+
+          <div class="menu-actions">
+            <button id="create-room-btn" class="btn primary">Create Room</button>
+            <div class="join-row">
+              <input id="room-code-input" type="text" maxlength="6" placeholder="MT82KQ" />
+              <button id="join-room-btn" class="btn secondary">Join Room</button>
+            </div>
+            <button id="howto-btn" class="btn ghost">How to Play</button>
+          </div>
+
+          <div class="menu-meta">
+            <span>Players: 6 max</span>
+            <span>Match timer: 2 / 5 / 10 / 15 min</span>
+          </div>
+
+          <div id="menu-error" class="message error hidden"></div>
+        </div>
+      </div>
+
+      <div id="howto-modal" class="modal hidden">
+        <div class="modal-card">
+          <h2>HOW TO PLAY</h2>
+          <ul>
+            <li>Move with WASD, arrow keys, or the mobile joystick.</li>
+            <li>Collect glowing crystals to grow and score energy.</li>
+            <li>Head-to-head collisions kill both snakes.</li>
+            <li>Head-to-body and head-to-tail collisions kill the attacker.</li>
+            <li>Avoid your own body and the arena walls.</li>
+            <li>Survive until the timer hits zero to win the match.</li>
+          </ul>
+          <button id="howto-close" class="btn primary">Close</button>
+        </div>
+      </div>
+
+      <div id="lobby-screen" class="screen">
+        <div class="lobby-panel">
+          <div class="lobby-header">
+            <span class="eyebrow">ROOM</span>
+            <h2>MT SNAKE FIGHT ARENA</h2>
+          </div>
+
+          <div class="room-box">
+            <span>ROOM CODE</span>
+            <div class="code-line">
+              <strong id="lobby-room-code">MT82KQ</strong>
+              <button id="copy-code-btn" class="mini-btn">Copy</button>
+            </div>
+          </div>
+
+          <div class="lobby-layout">
+            <div class="players-box">
+              <div class="box-header">
+                <span>Players</span>
+                <span id="lobby-player-count">0/6</span>
+              </div>
+              <ul id="lobby-player-list"></ul>
+            </div>
+
+            <div class="match-box">
+              <div class="match-row">
+                <span>Match Time</span>
+                <select id="match-duration-select">
+                  <option value="120">2 Minutes</option>
+                  <option value="300" selected>5 Minutes</option>
+                  <option value="600">10 Minutes</option>
+                  <option value="900">15 Minutes</option>
+                </select>
+              </div>
+              <div class="match-row">
+                <span>Host</span>
+                <strong id="lobby-host-name">—</strong>
+              </div>
+              <div class="match-row">
+                <span>Status</span>
+                <strong id="lobby-status">Waiting for host</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="lobby-actions">
+            <button id="start-game-btn" class="btn primary hidden">Start Game</button>
+            <button id="leave-room-btn" class="btn secondary">Leave Room</button>
+          </div>
+
+          <div id="lobby-error" class="message error hidden"></div>
+        </div>
+      </div>
+
+      <div id="game-screen" class="screen">
+        <canvas id="game-canvas"></canvas>
+
+        <div id="hud" class="hud">
+          <div class="hud-panel hud-left">
+            <div class="stat-block">
+              <span class="label">Player</span>
+              <strong id="hud-username">—</strong>
+            </div>
+            <div class="stat-block">
+              <span class="label">Current Energy</span>
+              <strong id="hud-score">0</strong>
+            </div>
+          </div>
+
+          <div class="hud-panel hud-center">
+            <div id="hud-timer" class="timer">5:00</div>
+            <div id="hud-phase" class="phase hidden">GET READY</div>
+            <div id="hud-countdown" class="countdown hidden">3</div>
+          </div>
+
+          <div class="hud-panel hud-right">
+            <div class="leaderboard-box">
+              <div class="leaderboard-title">Leaderboard</div>
+              <ol id="leaderboard-list"></ol>
+            </div>
+            <div class="hud-room">
+              <span id="room-code-hud">MT82KQ</span>
+              <span id="player-count">0/6</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="notification" class="notification hidden"></div>
+        <div id="toast" class="toast hidden"></div>
+
+        <div id="minimap-wrap" class="minimap-wrap">
+          <canvas id="minimap" width="180" height="140"></canvas>
+        </div>
+
+        <div id="portrait-warning" class="portrait-warning hidden">
+          Rotate your device for the best arena view.
+        </div>
+
+        <div id="controls-mobile" class="controls-mobile hidden">
+          <div id="dpad" class="dpad" role="group" aria-label="directional pad">
+            <button class="dpad-btn dpad-up" data-dir="up" aria-label="Up">▲</button>
+            <button class="dpad-btn dpad-left" data-dir="left" aria-label="Left">◀</button>
+            <button class="dpad-btn dpad-right" data-dir="right" aria-label="Right">▶</button>
+            <button class="dpad-btn dpad-down" data-dir="down" aria-label="Down">▼</button>
+          </div>
+
+          <div id="joystick" class="joystick hidden">
+            <div class="joystick-base">
+              <div id="joystick-knob" class="joystick-knob"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Direction indicator -->
+        <div id="direction-indicator" class="direction-indicator" aria-hidden="true">►</div>
+
+        <div id="end-screen" class="end-screen hidden">
+          <div class="end-card">
+            <h2>MATCH OVER</h2>
+            <ol id="results-list"></ol>
+            <div class="end-actions">
+              <button id="host-restart-btn" class="btn primary hidden">Play Again</button>
+              <button id="host-lobby-btn" class="btn secondary hidden">Return to Lobby</button>
+              <button id="results-close-btn" class="btn ghost">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="ui.js"></script>
+    <script src="game.js"></script>
+  </body>
+</html>
