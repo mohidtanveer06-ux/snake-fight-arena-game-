@@ -35,6 +35,15 @@ const UI = (() => {
     resultsCloseBtn: document.getElementById('results-close-btn')
   };
 
+  let powerUpsBar = document.getElementById('powerups-bar');
+  if (!powerUpsBar) {
+    powerUpsBar = document.createElement('div');
+    powerUpsBar.id = 'powerups-bar';
+    powerUpsBar.className = 'powerups-bar';
+    const hud = document.querySelector('.hud-left');
+    if (hud) hud.appendChild(powerUpsBar);
+  }
+
   let notificationTimeout = null;
   let toastTimeout = null;
 
@@ -68,10 +77,41 @@ const UI = (() => {
     toastTimeout = setTimeout(() => els.toast.classList.add('hidden'), 1800);
   }
 
+  function showScoreBump() {
+    els.hudScore.classList.remove('bump');
+    void els.hudScore.offsetWidth;
+    els.hudScore.classList.add('bump');
+  }
+
   function formatTime(seconds) {
     const mins = Math.floor(seconds / 60);
     const secs = Math.max(0, seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  function renderActivePowerUps(player) {
+    if (!powerUpsBar) return;
+    if (!player || !player.activePowerUps || player.activePowerUps.length === 0) {
+      powerUpsBar.innerHTML = '';
+      return;
+    }
+    const now = Date.now();
+    powerUpsBar.innerHTML = player.activePowerUps
+      .filter((pu) => pu.until > now)
+      .map((pu) => {
+        const remaining = Math.max(0, pu.until - now);
+        const total = pu.type === 'speed' ? 5000 : pu.type === 'magnet' ? 8000 : 6000;
+        const pct = Math.min(100, (remaining / total) * 100);
+        return `
+          <div class="pu-chip" style="--pu-color:${pu.color};">
+            <span class="pu-emoji">${pu.emoji || '?'}</span>
+            <div class="pu-meta">
+              <div class="pu-name">${pu.name || pu.type}</div>
+              <div class="pu-bar"><div class="pu-bar-fill" style="width:${pct}%"></div></div>
+            </div>
+          </div>
+        `;
+      }).join('');
   }
 
   function updateLobby(lobby, playerId) {
@@ -111,11 +151,18 @@ const UI = (() => {
       els.hudUsername.textContent = me.username;
       els.hudUsername.style.color = me.color;
       els.hudScore.textContent = String(me.score || 0);
+      renderActivePowerUps(me);
     }
 
     els.roomCodeHud.textContent = state.roomCode || '—';
     els.playerCount.textContent = `${state.playerCount}/${state.maxPlayers}`;
     els.hudTimer.textContent = formatTime(state.timeLeft || 0);
+
+    if (state.timeLeft && state.timeLeft <= 30) {
+      els.hudTimer.classList.add('warning');
+    } else {
+      els.hudTimer.classList.remove('warning');
+    }
 
     if (state.phase === 'countdown') {
       els.hudPhase.textContent = 'Get Ready';
@@ -134,10 +181,12 @@ const UI = (() => {
     const ordered = [...state.players].sort((a, b) => (b.totalScore || b.score || 0) - (a.totalScore || a.score || 0));
     els.leaderboardList.innerHTML = ordered.map((player, index) => {
       const highlight = player.id === playerId ? ' class="you"' : '';
+      const statusIcon = !player.alive ? '💀' : '';
+      const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
       return `
         <li${highlight}>
-          <span class="lb-rank">${index + 1}.</span>
-          <span class="lb-name" style="color:${player.color}">${escapeHtml(player.username)}</span>
+          <span class="lb-rank">${medal || (index + 1) + '.'}</span>
+          <span class="lb-name" style="color:${player.color}">${statusIcon}${escapeHtml(player.username)}</span>
           <span class="lb-score">${player.totalScore || player.score || 0}</span>
         </li>
       `;
@@ -146,13 +195,17 @@ const UI = (() => {
 
   function showEndScreen(results, isHost, playerId) {
     const ordered = [...results].sort((a, b) => a.rank - b.rank);
-    els.resultsList.innerHTML = ordered.map((entry) => `
-      <li>
-        <span class="rank-pill">#${entry.rank}</span>
-        <span style="color:${entry.color}">${escapeHtml(entry.username)}</span>
-        <strong>${entry.score}</strong>
-      </li>
-    `).join('');
+    els.resultsList.innerHTML = ordered.map((entry) => {
+      const medal = entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : '';
+      const youClass = entry.id === playerId ? ' class="you-row"' : '';
+      return `
+        <li${youClass}>
+          <span class="rank-pill">${medal || '#' + entry.rank}</span>
+          <span style="color:${entry.color}">${escapeHtml(entry.username)}</span>
+          <strong>${entry.score}</strong>
+        </li>
+      `;
+    }).join('');
 
     els.hostRestartBtn.classList.toggle('hidden', !isHost);
     els.hostLobbyBtn.classList.toggle('hidden', !isHost);
@@ -183,6 +236,7 @@ const UI = (() => {
     hideError,
     showNotification,
     showToast,
+    showScoreBump,
     updateLobby,
     updateHUD,
     showEndScreen,

@@ -8,31 +8,37 @@ const Game = (() => {
   let roomCode = null;
   let isHost = false;
   let gameState = null;
-  // localInput kept for backward compatibility, but only one direction is active at a time
+  let prevGameState = null;
   let localInput = { up: false, down: false, left: false, right: false };
-  // lastDirection: developer-intended current movement direction ('up','down','left','right')
   let lastDirection = null;
-  // last direction that was sent to server (to prevent reversing into self)
   let lastSentDirection = null;
-  // how often to send input updates to the server (ms)
-  // reduced interval for tighter responsiveness
   const inputTickInterval = 40;
   let inputTimerId = null;
   let animationFrame = null;
   let camera = { x: 0, y: 0 };
-  // initialization guard to avoid duplicate timers, sockets, and event bindings
   let initialized = false;
-  // single socket instance
   let socket = null;
 
+  let particles = [];
+  let screenShake = { intensity: 0, time: 0 };
+  let lastCrystalCount = 0;
+  let lastPlayerScores = new Map();
+  let lastPowerUpCount = 0;
+  let lastAliveStates = new Map();
+
+  let swipeStart = null;
+
   function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   function emitInput() {
     if (socket && socket.connected) {
-      // Send both booleans (for backward compatibility) and a single 'dir' string
       const payload = Object.assign({}, localInput);
       if (lastDirection) payload.dir = lastDirection;
       socket.emit('playerInput', payload);
@@ -52,7 +58,6 @@ const Game = (() => {
   }
 
   function setDirection(dir) {
-    // prevent reversing directly into yourself
     if (isOpposite(lastSentDirection || lastDirection, dir)) return;
     lastDirection = dir;
     updateLocalInputFromDirection(dir);
@@ -74,9 +79,7 @@ const Game = (() => {
   }
 
   function handleKeyDown(event) {
-    // If user is typing in an input/textarea/contentEditable, do not handle game keys
     if (isTextInputFocused()) return;
-
     const map = {
       KeyW: 'up', ArrowUp: 'up',
       KeyS: 'down', ArrowDown: 'down',
@@ -85,7 +88,6 @@ const Game = (() => {
     };
     const key = map[event.code];
     if (!key) return;
-    // prevent default only when actually handling a game control
     event.preventDefault();
     setDirection(key);
   }
@@ -93,10 +95,16 @@ const Game = (() => {
   function updateCamera() {
     const player = getLocalPlayer();
     if (!player || !gameState) return;
-    const targetX = clamp(player.x - window.innerWidth / 2, 0, gameState.arena.width - window.innerWidth);
-    const targetY = clamp(player.y - window.innerHeight / 2, 0, gameState.arena.height - window.innerHeight);
-    camera.x += (targetX - camera.x) * 0.12;
-    camera.y += (targetY - camera.y) * 0.12;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const arenaW = gameState.arena.width;
+    const arenaH = gameState.arena.height;
+    const targetX = player.x - vw / 2;
+    const targetY = player.y - vh / 2;
+    camera.x += (targetX - camera.x) * 0.15;
+    camera.y += (targetY - camera.y) * 0.15;
+    camera.x = clamp(camera.x, 0, Math.max(0, arenaW - vw));
+    camera.y = clamp(camera.y, 0, Math.max(0, arenaH - vh));
   }
 
   function clamp(value, min, max) {
@@ -108,30 +116,95 @@ const Game = (() => {
     return gameState.players.find((player) => player.id === playerId) || null;
   }
 
+  function spawnParticles(x, y, color, count = 12, opts = {}) {
+    const { speed = 3, life = 0.6, spread = 1, size = 4 } = opts;
+    for (let i = 0; i < count; i += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const spd = (Math.random() * 0.6 + 0.4) * speed;
+      particles.push({
+        x, y,
+        vx: Math.cos(angle) * spd * spread,
+        vy: Math.sin(angle) * spd * spread,
+        life: life * (0.7 + Math.random() * 0.6),
+        maxLife: life,
+        color,
+        size: size * (0.6 + Math.random() * 0.8)
+      });
+    }
+  }
+
+  function addScreenShake(intensity, duration = 0.25) {
+    screenShake.intensity = Math.max(screenShake.intensity, intensity);
+    screenShake.time = Math.max(screenShake.time, duration);
+  }
+
+  function updateParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i -= 1) {
+      const p = particles[i];
+      p.life -= dt;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx *= 0.96;
+      p.vy *= 0.96;
+    }
+    if (screenShake.time > 0) {
+      screenShake.time -= dt;
+      screenShake.intensity *= 0.92;
+      if (screenShake.time <= 0) { screenShake.intensity = 0; }
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      const a = Math.max(0, p.life / p.maxLife);
+      const x = p.x - camera.x;
+      const y = p.y - camera.y;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(x, y, p.size * a, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function drawBackground() {
     const width = gameState.arena.width;
     const height = gameState.arena.height;
+    ctx.save();
+    let sx = 0, sy = 0;
+    if (screenShake.intensity > 0.1) {
+      sx = (Math.random() - 0.5) * screenShake.intensity * 2;
+      sy = (Math.random() - 0.5) * screenShake.intensity * 2;
+      ctx.translate(sx, sy);
+    }
+
     ctx.fillStyle = '#060a14';
     ctx.fillRect(-camera.x, -camera.y, width, height);
 
-    ctx.strokeStyle = 'rgba(85, 248, 255, 0.08)';
-    const grid = 50;
+    ctx.strokeStyle = 'rgba(85, 248, 255, 0.09)';
+    const grid = 60;
     for (let x = Math.floor(camera.x / grid) * grid; x < camera.x + window.innerWidth + grid; x += grid) {
       ctx.beginPath();
-      ctx.moveTo(x - camera.x, 0 - camera.y);
+      ctx.moveTo(x - camera.x, -camera.y);
       ctx.lineTo(x - camera.x, height - camera.y);
       ctx.stroke();
     }
     for (let y = Math.floor(camera.y / grid) * grid; y < camera.y + window.innerHeight + grid; y += grid) {
       ctx.beginPath();
-      ctx.moveTo(0 - camera.x, y - camera.y);
+      ctx.moveTo(-camera.x, y - camera.y);
       ctx.lineTo(width - camera.x, y - camera.y);
       ctx.stroke();
     }
 
-    ctx.strokeStyle = 'rgba(255, 45, 149, 0.6)';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-camera.x + 12, -camera.y + 12, width - 24, height - 24);
+    ctx.strokeStyle = 'rgba(255, 45, 149, 0.7)';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(-camera.x + 14, -camera.y + 14, width - 28, height - 28);
+    ctx.restore();
   }
 
   function drawCrystals() {
@@ -139,6 +212,7 @@ const Game = (() => {
     for (const crystal of gameState.crystals) {
       const x = crystal.x - camera.x;
       const y = crystal.y - camera.y;
+      if (x < -40 || x > window.innerWidth + 40 || y < -40 || y > window.innerHeight + 40) continue;
       const pulse = 1 + Math.sin(Date.now() * 0.005 + crystal.x) * 0.18;
       ctx.save();
       ctx.translate(x, y);
@@ -162,74 +236,175 @@ const Game = (() => {
     for (const fragment of gameState.droppedEnergy) {
       const x = fragment.x - camera.x;
       const y = fragment.y - camera.y;
+      if (x < -30 || x > window.innerWidth + 30 || y < -30 || y > window.innerHeight + 30) continue;
+      const pulse = 1 + Math.sin(Date.now() * 0.008 + fragment.x * 0.01) * 0.2;
       ctx.beginPath();
       ctx.fillStyle = 'rgba(255, 209, 102, 0.9)';
       ctx.shadowColor = '#FFD166';
       ctx.shadowBlur = 14;
-      ctx.arc(x, y, fragment.radius, 0, Math.PI * 2);
+      ctx.arc(x, y, fragment.radius * pulse, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
     }
   }
 
+  function drawPowerUps() {
+    if (!gameState || !gameState.powerUps) return;
+    const now = Date.now();
+    for (const pu of gameState.powerUps) {
+      const x = pu.x - camera.x;
+      const y = pu.y - camera.y;
+      if (x < -60 || x > window.innerWidth + 60 || y < -60 || y > window.innerHeight + 60) continue;
+      const life = Math.max(0, 1 - (now - pu.spawnedAt) / 30000);
+      const pulse = 1 + Math.sin(now * 0.006 + pu.x) * 0.2;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.shadowColor = pu.color;
+      ctx.shadowBlur = 25 * pulse;
+      ctx.strokeStyle = pu.color;
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.3 + life * 0.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, pu.radius * 1.6 * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = pu.color;
+      ctx.beginPath();
+      ctx.arc(0, 0, pu.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff';
+      ctx.font = `${pu.radius * 1.2}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(pu.emoji || '?', 0, 2);
+      ctx.restore();
+    }
+  }
+
   function drawSnake(player, local) {
     if (!player.segments || !player.segments.length) return;
-
+    const now = Date.now();
     const points = player.segments.map((segment) => ({ x: segment.x - camera.x, y: segment.y - camera.y }));
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i += 1) {
-      const point = points[i];
-      ctx.lineTo(point.x, point.y);
+    const hasSpeed = player.speedUntil > now;
+    const hasMagnet = player.magnetUntil > now;
+    const hasShield = player.shieldUntil > now;
+    const spawning = player.spawnAnimUntil > now;
+    const headRadius = 18;
+    const bodyRadius = 15;
+    const eyeR = 4.2;
+
+    if (hasMagnet && local) {
+      const hp = points[0];
+      ctx.save();
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.38)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 8]);
+      ctx.beginPath();
+      ctx.arc(hp.x, hp.y, 180, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
     }
-    ctx.strokeStyle = player.color;
-    ctx.lineWidth = 18;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.shadowColor = player.color;
-    ctx.shadowBlur = local ? 25 : 15;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+
+    ctx.save();
+    if (spawning) {
+      const t = 1 - (player.spawnAnimUntil - now) / 1200;
+      ctx.globalAlpha = clamp(t * 1.5, 0.2, 1);
+    }
+
+    for (let i = points.length - 1; i >= 0; i -= 1) {
+      const p = points[i];
+      const r = i === 0 ? headRadius : bodyRadius - Math.min(6, i * 0.18);
+      const shade = Math.max(0.72, 1 - i * 0.015);
+      ctx.save();
+      ctx.shadowColor = player.color;
+      ctx.shadowBlur = local ? 18 : 10;
+      if (hasSpeed) ctx.shadowColor = '#FFD166';
+      ctx.fillStyle = player.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(p.x - r * 0.35, p.y - r * 0.35, r * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     const headX = points[0].x;
     const headY = points[0].y;
-    ctx.fillStyle = player.color;
-    ctx.beginPath();
-    ctx.arc(headX, headY, 17, 0, Math.PI * 2);
-    ctx.fill();
 
-    ctx.fillStyle = '#ffffff';
-    const eyeOffset = 6;
-    const eyeX = player.dirX || 1;
-    const eyeY = player.dirY || 0;
-    const eyeLX = headX + eyeX * 5 + eyeY * -4;
-    const eyeLY = headY + eyeY * 5 + eyeX * 4;
-    const eyeRX = headX + eyeX * 5 + eyeY * 4;
-    const eyeRY = headY + eyeY * 5 - eyeX * 4;
-    ctx.beginPath();
-    ctx.arc(eyeLX, eyeLY, 2.3, 0, Math.PI * 2);
-    ctx.arc(eyeRX, eyeRY, 2.3, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = '#e7f5ff';
-    ctx.font = '600 12px Rajdhani';
-    ctx.textAlign = 'center';
-    ctx.fillText(player.username, headX, headY - 20);
-
-    if (player.shieldUntil > Date.now()) {
-      ctx.strokeStyle = 'rgba(85, 248, 255, 0.9)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(headX, headY, 24, 0, Math.PI * 2);
-      ctx.stroke();
+    if (hasSpeed) {
+      const dx = player.dirX || 1;
+      const dy = player.dirY || 0;
+      for (let t = 1; t <= 3; t += 1) {
+        ctx.save();
+        ctx.globalAlpha = 0.28 - t * 0.07;
+        ctx.fillStyle = player.color;
+        ctx.beginPath();
+        ctx.arc(headX - dx * t * 12, headY - dy * t * 12, headRadius - t * 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     }
+
+    const dirX = player.dirX || 1;
+    const dirY = player.dirY || 0;
+    const perpX = -dirY;
+    const perpY = dirX;
+    const eyeBaseX = headX + dirX * 7;
+    const eyeBaseY = headY + dirY * 7;
+    const sep = 6;
+    const eyeLX = eyeBaseX + perpX * sep;
+    const eyeLY = eyeBaseY + perpY * sep;
+    const eyeRX = eyeBaseX - perpX * sep;
+    const eyeRY = eyeBaseY - perpY * sep;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(eyeLX, eyeLY, eyeR, 0, Math.PI * 2);
+    ctx.arc(eyeRX, eyeRY, eyeR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#101828';
+    ctx.beginPath();
+    ctx.arc(eyeLX + dirX * 1.5, eyeLY + dirY * 1.5, eyeR * 0.55, 0, Math.PI * 2);
+    ctx.arc(eyeRX + dirX * 1.5, eyeRY + dirY * 1.5, eyeR * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '700 13px Rajdhani';
+    ctx.textAlign = 'center';
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(player.username, headX, headY - headRadius - 8);
+    ctx.fillText(player.username, headX, headY - headRadius - 8);
+
+    if (hasShield) {
+      const shieldPulse = 1 + Math.sin(now * 0.012) * 0.1;
+      ctx.strokeStyle = 'rgba(85, 248, 255, 0.95)';
+      ctx.lineWidth = 3.5;
+      ctx.shadowColor = '#55F8FF';
+      ctx.shadowBlur = 22;
+      ctx.beginPath();
+      ctx.arc(headX, headY, headRadius + 12 + shieldPulse * 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    ctx.restore();
   }
 
   function drawPlayers() {
     if (!gameState) return;
+    const localP = getLocalPlayer();
+    const others = [];
     for (const player of gameState.players) {
-      drawSnake(player, player.id === playerId);
+      if (player.id === playerId) continue;
+      others.push(player);
     }
+    for (const player of others) drawSnake(player, false);
+    if (localP) drawSnake(localP, true);
   }
 
   function drawMinimap() {
@@ -244,20 +419,40 @@ const Game = (() => {
     miniCtx.strokeStyle = 'rgba(85, 248, 255, 0.6)';
     miniCtx.strokeRect(2, 2, minimap.width - 4, minimap.height - 4);
 
+    if (gameState.powerUps) {
+      for (const pu of gameState.powerUps) {
+        const px = pu.x * scaleX;
+        const py = pu.y * scaleY;
+        miniCtx.fillStyle = pu.color;
+        miniCtx.beginPath();
+        miniCtx.arc(px, py, 2.5, 0, Math.PI * 2);
+        miniCtx.fill();
+      }
+    }
+
     for (const player of gameState.players) {
       const px = player.x * scaleX;
       const py = player.y * scaleY;
       miniCtx.beginPath();
       miniCtx.fillStyle = player.id === playerId ? '#55F8FF' : player.color;
-      miniCtx.arc(px, py, player.id === playerId ? 3.5 : 2.5, 0, Math.PI * 2);
+      miniCtx.globalAlpha = player.alive ? 1 : 0.3;
+      miniCtx.arc(px, py, player.id === playerId ? 3.8 : 2.8, 0, Math.PI * 2);
       miniCtx.fill();
+      miniCtx.globalAlpha = 1;
     }
+
+    const viewX = camera.x * scaleX;
+    const viewY = camera.y * scaleY;
+    const viewW = window.innerWidth * scaleX;
+    const viewH = window.innerHeight * scaleY;
+    miniCtx.strokeStyle = 'rgba(255, 209, 102, 0.7)';
+    miniCtx.lineWidth = 1;
+    miniCtx.strokeRect(viewX, viewY, viewW, viewH);
   }
 
   function updateDirectionIndicatorFromState() {
     const el = document.getElementById('direction-indicator');
     if (!el) return;
-    // prefer lastDirection (local), otherwise fall back to server state for this player
     let dir = lastDirection;
     try {
       const local = gameState && gameState.players && gameState.players.find((p) => p.id === playerId);
@@ -281,24 +476,101 @@ const Game = (() => {
     el.classList.add(dir);
   }
 
-  function render() {
+  function detectGameEvents() {
+    if (!gameState || !prevGameState) return;
+    const now = Date.now();
+    const crystalCount = gameState.crystals ? gameState.crystals.length : 0;
+    const local = getLocalPlayer();
+
+    if (local) {
+      const prevScore = lastPlayerScores.get(local.id) || 0;
+      if (local.score > prevScore && prevScore > 0) {
+        const gain = local.score - prevScore;
+        if (gain >= 1) {
+          spawnParticles(local.x, local.y, '#FFD166', 6 + Math.min(16, gain * 2), { speed: 2.5, life: 0.45 });
+          UI.showScoreBump();
+        }
+      }
+      lastPlayerScores.set(local.id, local.score);
+
+      const prevAlive = lastAliveStates.get(local.id);
+      if (prevAlive && !local.alive) {
+        spawnParticles(local.x, local.y, local.color, 36, { speed: 5, life: 0.9, spread: 1.4, size: 6 });
+        spawnParticles(local.x, local.y, '#ff6b6b', 20, { speed: 3.5, life: 0.7 });
+        addScreenShake(14, 0.4);
+        UI.showToast('You died! Respawning...');
+      } else if (prevAlive === false && local.alive) {
+        spawnParticles(local.x, local.y, '#55F8FF', 24, { speed: 3, life: 0.7 });
+        UI.showToast('Respawned!');
+      }
+      lastAliveStates.set(local.id, local.alive);
+
+      if (gameState.powerUps && local.alive) {
+        const prevPUCount = lastPowerUpCount || 0;
+        if (gameState.powerUps.length < prevPUCount) {
+          const prevPUs = prevGameState.powerUps || [];
+          const currentPUs = gameState.powerUps || [];
+          const collected = prevPUs.filter((pp) => !currentPUs.some((cp) => cp.id === pp.id));
+          for (const pu of collected) {
+            const d = Math.hypot(local.x - pu.x, local.y - pu.y);
+            if (d < 60) {
+              spawnParticles(pu.x, pu.y, pu.color, 28, { speed: 4, life: 0.6, size: 5 });
+              UI.showToast(`${pu.emoji || ''} ${pu.name}!`);
+            }
+          }
+        }
+      }
+    }
+
+    for (const p of gameState.players) {
+      if (p.id === playerId) continue;
+      const prevA = lastAliveStates.get(p.id);
+      if (prevA && !p.alive) {
+        spawnParticles(p.x, p.y, p.color, 28, { speed: 4.5, life: 0.8, spread: 1.3, size: 5 });
+      }
+      lastAliveStates.set(p.id, p.alive);
+    }
+
+    if (gameState.powerUps) {
+      lastPowerUpCount = gameState.powerUps.length;
+    }
+    lastCrystalCount = crystalCount;
+  }
+
+  function render(dt) {
     if (!gameState) return;
+    updateParticles(dt);
     updateCamera();
+
+    ctx.save();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    ctx.fillStyle = '#04060d';
+    ctx.fillRect(0, 0, vw, vh);
+
     drawBackground();
     drawCrystals();
     drawDroppedEnergy();
+    drawPowerUps();
     drawPlayers();
+    drawParticles();
+    ctx.restore();
+
     drawMinimap();
     updateDirectionIndicatorFromState();
+    detectGameEvents();
+    prevGameState = gameState;
   }
 
-  function loop() {
-    render();
+  let lastRenderTime = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - lastRenderTime) / 1000);
+    lastRenderTime = now;
+    render(dt);
     animationFrame = requestAnimationFrame(loop);
   }
 
   function connect() {
-    // avoid creating multiple socket instances
     if (socket) return;
     socket = io();
 
@@ -334,16 +606,19 @@ const Game = (() => {
     socket.on('gameStarted', (data) => {
       UI.showNotification(data.message || 'Game starting');
       UI.hideEndScreen();
+      particles = [];
+      lastPlayerScores.clear();
+      lastAliveStates.clear();
+      lastCrystalCount = 0;
+      lastPowerUpCount = 0;
     });
 
     socket.on('gameState', (state) => {
       gameState = state;
       UI.updateHUD(state, playerId);
-      // if server provides the player's current direction, use it to avoid illegal reversals
       try {
         const local = state.players && state.players.find((p) => p.id === playerId);
         if (local && (local.dirX !== undefined || local.dirY !== undefined)) {
-          // convert dirX/dirY to discrete direction
           if (local.dirX === 1 && local.dirY === 0) lastDirection = 'right';
           else if (local.dirX === -1 && local.dirY === 0) lastDirection = 'left';
           else if (local.dirY === 1 && local.dirX === 0) lastDirection = 'down';
@@ -388,20 +663,15 @@ const Game = (() => {
       roomCode = null;
       isHost = false;
       gameState = null;
+      particles = [];
       UI.showScreen('menu');
       UI.hideEndScreen();
       UI.hideError('menu');
     });
   }
 
-  function applyLocalUserInput() {
-    emitInput();
-  }
-
   function bindEvents() {
-    // keyboard: only act on keydown so movement persists after releasing the key (classic Snake behaviour)
     window.addEventListener('keydown', handleKeyDown);
-    // when the page loses focus, clear input for safety
     window.addEventListener('blur', () => {
       lastDirection = null;
       localInput = { up: false, down: false, left: false, right: false };
@@ -425,7 +695,6 @@ const Game = (() => {
       knob.style.left = `${50 + (offsetX / (rect.width * 0.45)) * 38}%`;
       knob.style.top = `${50 + (offsetY / (rect.width * 0.45)) * 38}%`;
 
-      // convert joystick direction to a discrete direction and persist it (tap or hold)
       const absX = Math.abs(offsetX);
       const absY = Math.abs(offsetY);
       if (absX > absY) {
@@ -449,7 +718,6 @@ const Game = (() => {
     joystick.addEventListener('pointerup', (event) => {
       pointerDown = false;
       try { joystick.releasePointerCapture(event.pointerId); } catch (e) { /* ignore */ }
-      // reset knob visually but keep the chosen direction (persistent)
       knob.style.left = '50%';
       knob.style.top = '50%';
       emitInput();
@@ -470,7 +738,6 @@ const Game = (() => {
       emitInput();
     });
 
-    // D-pad buttons (mobile) — tap/pointer events set the persistent direction immediately
     const dpad = document.getElementById('dpad');
     if (dpad) {
       dpad.querySelectorAll('.dpad-btn').forEach((btn) => {
@@ -488,7 +755,6 @@ const Game = (() => {
           e.preventDefault();
           btn.classList.remove('pressed');
         });
-        // also listen for click to support older browsers
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           const dir = btn.dataset.dir;
@@ -496,6 +762,30 @@ const Game = (() => {
         });
       });
     }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+        swipeStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+      }
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!swipeStart) return;
+      const dx = e.clientX - swipeStart.x;
+      const dy = e.clientY - swipeStart.y;
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      const threshold = 24;
+      if (absX > threshold || absY > threshold) {
+        if (absX > absY) {
+          setDirection(dx > 0 ? 'right' : 'left');
+        } else {
+          setDirection(dy > 0 ? 'down' : 'up');
+        }
+        swipeStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+      }
+    });
+    canvas.addEventListener('pointerup', () => { swipeStart = null; });
+    canvas.addEventListener('pointercancel', () => { swipeStart = null; });
 
     document.getElementById('create-room-btn').addEventListener('click', () => {
       const username = UI.getUsername();
@@ -575,28 +865,27 @@ const Game = (() => {
     bindEvents();
     connect();
 
-    // clear any existing animation frame and timer to avoid duplicates
     if (animationFrame) cancelAnimationFrame(animationFrame);
     if (inputTimerId) clearInterval(inputTimerId);
 
-    // send inputs at a steady interval for smooth continuous movement
     inputTimerId = setInterval(() => { emitInput(); }, inputTickInterval);
 
     window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('orientationchange', () => {
+      setTimeout(resizeCanvas, 200);
+    });
     if (window.matchMedia('(orientation: portrait)').matches) {
       document.getElementById('portrait-warning').classList.remove('hidden');
     }
     if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-      // show mobile controls container which includes D-pad and joystick
       const cm = document.getElementById('controls-mobile');
       if (cm) cm.classList.remove('hidden');
       const j = document.getElementById('joystick');
       if (j) j.classList.remove('hidden');
     }
-    // ensure animation loop continues
+    lastRenderTime = performance.now();
     animationFrame = requestAnimationFrame(loop);
 
-    // clear timer when unloading
     window.addEventListener('beforeunload', () => {
       if (inputTimerId) clearInterval(inputTimerId);
     });

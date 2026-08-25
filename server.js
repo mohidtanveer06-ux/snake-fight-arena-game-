@@ -15,6 +15,12 @@ const PLAYER_COLORS = ['#00F5D4', '#FF006E', '#4CC9F0', '#FFBE0B', '#A36BFF', '#
 const TICK_RATE = 30;
 const TICK_MS = 1000 / TICK_RATE;
 
+const POWERUP_TYPES = {
+  SPEED: { id: 'speed', name: 'Speed Boost', color: '#FFD166', duration: 5000, emoji: '⚡' },
+  MAGNET: { id: 'magnet', name: 'Pellet Magnet', color: '#C084FC', duration: 8000, emoji: '🧲' },
+  SHIELD: { id: 'shield', name: 'Invincibility', color: '#55F8FF', duration: 6000, emoji: '🛡️' }
+};
+
 // Movement settings
 const CELL_SIZE = 12; // segment spacing
 const MOVE_CELLS_PER_SEC = 8; // legacy, not used in smooth mode
@@ -114,6 +120,24 @@ function createEnergyDrop(value, x, y) {
   return fragments;
 }
 
+function createPowerUp() {
+  const types = Object.values(POWERUP_TYPES);
+  const type = types[Math.floor(Math.random() * types.length)];
+  const spawn = randomSpawn();
+  return {
+    id: `powerup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type: type.id,
+    name: type.name,
+    color: type.color,
+    emoji: type.emoji,
+    duration: type.duration,
+    x: spawn.x,
+    y: spawn.y,
+    radius: 18,
+    spawnedAt: Date.now()
+  };
+}
+
 function buildSegments(headX, headY, length) {
   const segments = [];
   for (let i = 0; i < length; i += 1) {
@@ -133,16 +157,38 @@ class GameRoom {
     this.countdown = 3;
     this.crystals = createCrystalField();
     this.droppedEnergy = [];
+    this.powerUps = [];
+    this.nextPowerUpAt = 0;
     this.finalResults = null;
     this.lastTick = Date.now();
     this.roundNumber = 0;
+  }
+
+  findSafeSpawn(excludeRadius = 120) {
+    const players = Array.from(this.players.values());
+    let attempts = 0;
+    let spawn;
+    while (attempts < 50) {
+      spawn = randomSpawn();
+      let safe = true;
+      for (const p of players) {
+        if (!p.alive) continue;
+        if (dist(spawn, p) < excludeRadius) {
+          safe = false;
+          break;
+        }
+      }
+      if (safe) break;
+      attempts += 1;
+    }
+    return spawn || randomSpawn();
   }
 
   addPlayer(id, username) {
     if (this.players.size >= MAX_PLAYERS) return false;
     const usedColors = new Set(Array.from(this.players.values()).map((player) => player.color));
     const color = PLAYER_COLORS.find((entry) => !usedColors.has(entry)) || PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)];
-    const spawn = randomSpawn();
+    const spawn = this.findSafeSpawn(160);
     const player = {
       id,
       username,
@@ -164,8 +210,11 @@ class GameRoom {
       comboTimeout: 0,
       respawnAt: 0,
       shieldUntil: 0,
+      speedUntil: 0,
+      magnetUntil: 0,
+      activePowerUps: [],
       lastDeathReason: null,
-      // movement accumulator for grid stepping
+      spawnAnimUntil: 0,
       moveAccumulator: 0
     };
     this.players.set(id, player);
@@ -227,11 +276,16 @@ class GameRoom {
         longestSnake: player.longestSnake,
         combo: player.combo,
         shieldUntil: player.shieldUntil,
+        speedUntil: player.speedUntil,
+        magnetUntil: player.magnetUntil,
+        activePowerUps: player.activePowerUps,
+        spawnAnimUntil: player.spawnAnimUntil,
         lastDeathReason: player.lastDeathReason,
         isHost: player.id === this.hostId
       })),
       crystals: this.crystals,
       droppedEnergy: this.droppedEnergy,
+      powerUps: this.powerUps,
       playerCount: this.players.size,
       maxPlayers: MAX_PLAYERS,
       finalResults: this.finalResults,
@@ -246,7 +300,7 @@ class GameRoom {
   }
 
   resetPlayerForMatch(player) {
-    const spawn = randomSpawn();
+    const spawn = this.findSafeSpawn(180);
     player.x = spawn.x;
     player.y = spawn.y;
     player.dirX = 1;
@@ -263,6 +317,10 @@ class GameRoom {
     player.combo = 1;
     player.comboTimeout = 0;
     player.shieldUntil = Date.now() + 2000;
+    player.speedUntil = 0;
+    player.magnetUntil = 0;
+    player.activePowerUps = [];
+    player.spawnAnimUntil = Date.now() + 1200;
     player.respawnAt = 0;
     player.lastDeathReason = null;
     player.moveAccumulator = 0;
@@ -277,6 +335,8 @@ class GameRoom {
     this.finalResults = null;
     this.crystals = createCrystalField();
     this.droppedEnergy = [];
+    this.powerUps = [];
+    this.nextPowerUpAt = Date.now() + 8000;
     this.players.forEach((player) => this.resetPlayerForMatch(player));
     return true;
   }
@@ -288,8 +348,10 @@ class GameRoom {
     this.finalResults = null;
     this.crystals = createCrystalField();
     this.droppedEnergy = [];
+    this.powerUps = [];
+    this.nextPowerUpAt = 0;
     this.players.forEach((player) => {
-      const spawn = randomSpawn();
+      const spawn = this.findSafeSpawn(160);
       player.x = spawn.x;
       player.y = spawn.y;
       player.input = { up: false, down: false, left: false, right: false };
@@ -300,6 +362,10 @@ class GameRoom {
       player.combo = 1;
       player.comboTimeout = 0;
       player.shieldUntil = 0;
+      player.speedUntil = 0;
+      player.magnetUntil = 0;
+      player.activePowerUps = [];
+      player.spawnAnimUntil = 0;
       player.respawnAt = 0;
       player.lastDeathReason = null;
       player.moveAccumulator = 0;
@@ -309,11 +375,9 @@ class GameRoom {
   updateMovement(player, dt) {
     if (!player.alive || this.phase !== 'playing') return;
 
-    // Determine desired direction from input (prefer discrete directions)
     const horizontal = (player.input.right ? 1 : 0) - (player.input.left ? 1 : 0);
     const vertical = (player.input.down ? 1 : 0) - (player.input.up ? 1 : 0);
     if (horizontal !== 0 || vertical !== 0) {
-      // Normalize to unit cardinal direction. Prevent diagonal movement by prioritizing the larger axis.
       if (Math.abs(horizontal) > Math.abs(vertical)) {
         player.dirX = horizontal > 0 ? 1 : -1;
         player.dirY = 0;
@@ -323,9 +387,13 @@ class GameRoom {
       }
     }
 
-    // continuous smooth movement: move by speed * dt (pixels per second)
-    const nextX = player.x + (player.dirX || 0) * PLAYER_SPEED * dt;
-    const nextY = player.y + (player.dirY || 0) * PLAYER_SPEED * dt;
+    const now = Date.now();
+    const hasSpeed = player.speedUntil > now;
+    const speedMult = hasSpeed ? 1.65 : 1;
+    const effectiveSpeed = PLAYER_SPEED * speedMult;
+
+    const nextX = player.x + (player.dirX || 0) * effectiveSpeed * dt;
+    const nextY = player.y + (player.dirY || 0) * effectiveSpeed * dt;
     player.x = clamp(nextX, PLAYER_RADIUS + 10, ARENA_WIDTH - PLAYER_RADIUS - 10);
     player.y = clamp(nextY, PLAYER_RADIUS + 10, ARENA_HEIGHT - PLAYER_RADIUS - 10);
 
@@ -372,9 +440,21 @@ class GameRoom {
   }
 
   collectCrystals(player) {
+    const now = Date.now();
+    const hasMagnet = player.magnetUntil > now;
+    const magnetRadius = hasMagnet ? 180 : 0;
     for (let i = this.crystals.length - 1; i >= 0; i -= 1) {
       const crystal = this.crystals[i];
-      if (dist(player, crystal) < crystal.radius + PLAYER_RADIUS + 8) {
+      const pickupDist = crystal.radius + PLAYER_RADIUS + 8;
+      const d = dist(player, crystal);
+      if (hasMagnet && d < magnetRadius && d >= pickupDist) {
+        const dx = player.x - crystal.x;
+        const dy = player.y - crystal.y;
+        const len = Math.hypot(dx, dy) || 1;
+        crystal.x += (dx / len) * 8;
+        crystal.y += (dy / len) * 8;
+      }
+      if (d < pickupDist) {
         player.score += crystal.value;
         player.totalScore += crystal.value;
         player.crystalsCollected += 1;
@@ -387,9 +467,21 @@ class GameRoom {
   }
 
   collectDroppedEnergy(player) {
+    const now = Date.now();
+    const hasMagnet = player.magnetUntil > now;
+    const magnetRadius = hasMagnet ? 180 : 0;
     for (let i = this.droppedEnergy.length - 1; i >= 0; i -= 1) {
       const fragment = this.droppedEnergy[i];
-      if (dist(player, fragment) < fragment.radius + PLAYER_RADIUS + 8) {
+      const pickupDist = fragment.radius + PLAYER_RADIUS + 8;
+      const d = dist(player, fragment);
+      if (hasMagnet && d < magnetRadius && d >= pickupDist) {
+        const dx = player.x - fragment.x;
+        const dy = player.y - fragment.y;
+        const len = Math.hypot(dx, dy) || 1;
+        fragment.x += (dx / len) * 10;
+        fragment.y += (dy / len) * 10;
+      }
+      if (d < pickupDist) {
         player.score += fragment.value;
         player.totalScore += fragment.value;
         this.droppedEnergy.splice(i, 1);
@@ -397,8 +489,37 @@ class GameRoom {
     }
   }
 
+  applyPowerUp(player, powerUp) {
+    const now = Date.now();
+    if (powerUp.type === 'speed') {
+      player.speedUntil = Math.max(player.speedUntil, now + powerUp.duration);
+    } else if (powerUp.type === 'magnet') {
+      player.magnetUntil = Math.max(player.magnetUntil, now + powerUp.duration);
+    } else if (powerUp.type === 'shield') {
+      player.shieldUntil = Math.max(player.shieldUntil, now + powerUp.duration);
+    }
+    player.activePowerUps = player.activePowerUps.filter((p) => p.type !== powerUp.type);
+    player.activePowerUps.push({
+      type: powerUp.type,
+      name: powerUp.name,
+      color: powerUp.color,
+      emoji: powerUp.emoji,
+      until: now + powerUp.duration
+    });
+  }
+
+  collectPowerUps(player) {
+    for (let i = this.powerUps.length - 1; i >= 0; i -= 1) {
+      const pu = this.powerUps[i];
+      if (dist(player, pu) < pu.radius + PLAYER_RADIUS + 6) {
+        this.applyPowerUp(player, pu);
+        this.powerUps.splice(i, 1);
+      }
+    }
+  }
+
   respawnPlayer(player) {
-    const spawn = randomSpawn();
+    const spawn = this.findSafeSpawn(200);
     player.x = spawn.x;
     player.y = spawn.y;
     player.dirX = 1;
@@ -406,8 +527,17 @@ class GameRoom {
     player.input = { up: false, down: false, left: false, right: false };
     player.segments = buildSegments(spawn.x, spawn.y, 5);
     player.score = 0;
+    player.totalScore = 0;
+    player.crystalsCollected = 0;
+    player.combo = 1;
+    player.comboTimeout = 0;
+    player.longestSnake = 5;
     player.alive = true;
-    player.shieldUntil = Date.now() + 2000;
+    player.shieldUntil = Date.now() + 3000;
+    player.speedUntil = 0;
+    player.magnetUntil = 0;
+    player.activePowerUps = [];
+    player.spawnAnimUntil = Date.now() + 1500;
     player.respawnAt = 0;
     player.lastDeathReason = null;
     player.moveAccumulator = 0;
@@ -418,16 +548,24 @@ class GameRoom {
     player.alive = false;
     player.deaths += 1;
     player.lastDeathReason = reason;
-    if (player.score > 0) {
-      this.droppedEnergy.push(...createEnergyDrop(player.score, player.x, player.y));
-      player.score = 0;
+    const dropValue = Math.max(4, Math.floor(player.totalScore || player.score || 0));
+    if (dropValue > 0) {
+      this.droppedEnergy.push(...createEnergyDrop(dropValue, player.x, player.y));
     }
+    player.score = 0;
+    player.totalScore = 0;
     player.combo = 1;
     player.comboTimeout = 0;
+    player.longestSnake = 5;
+    player.speedUntil = 0;
+    player.magnetUntil = 0;
+    player.activePowerUps = [];
+    player.segments = [];
     player.respawnAt = Date.now() + 2000;
   }
 
   resolveCollisions() {
+    const now = Date.now();
     const players = Array.from(this.players.values());
     for (let i = 0; i < players.length; i += 1) {
       const first = players[i];
@@ -437,14 +575,17 @@ class GameRoom {
         if (!second.alive) continue;
         const headDistance = dist(first, second);
         if (headDistance < PLAYER_RADIUS * 2.1) {
-          this.killPlayer(first, 'HEAD COLLISION');
-          this.killPlayer(second, 'HEAD COLLISION');
+          const firstShield = first.shieldUntil > now;
+          const secondShield = second.shieldUntil > now;
+          if (!firstShield) this.killPlayer(first, 'HEAD COLLISION');
+          if (!secondShield) this.killPlayer(second, 'HEAD COLLISION');
         }
       }
     }
 
     for (const player of players) {
       if (!player.alive) continue;
+      if (player.shieldUntil > now) continue;
       for (const other of players) {
         if (other.id === player.id || !other.alive) continue;
         for (const segment of other.segments) {
@@ -459,6 +600,7 @@ class GameRoom {
 
     for (const player of players) {
       if (!player.alive) continue;
+      if (player.shieldUntil > now) continue;
       for (let i = 2; i < player.segments.length; i += 1) {
         const segment = player.segments[i];
         if (dist(player, segment) < PLAYER_RADIUS + 4) {
@@ -470,6 +612,7 @@ class GameRoom {
 
     for (const player of players) {
       if (!player.alive) continue;
+      if (player.shieldUntil > now) continue;
       const hitWall = player.x <= 18 || player.x >= ARENA_WIDTH - 18 || player.y <= 18 || player.y >= ARENA_HEIGHT - 18;
       if (hitWall) {
         this.killPlayer(player, 'WALL HIT');
@@ -495,13 +638,24 @@ class GameRoom {
     if (this.phase === 'playing') {
       this.timeLeft = Math.max(0, this.timeLeft - dt);
 
+      if (now >= this.nextPowerUpAt && this.powerUps.length < 3) {
+        this.powerUps.push(createPowerUp());
+        this.nextPowerUpAt = now + 10000 + Math.random() * 8000;
+      }
+
+      this.powerUps = this.powerUps.filter((pu) => now - pu.spawnedAt < 30000);
+
       for (const player of this.players.values()) {
+        if (player.activePowerUps && player.activePowerUps.length > 0) {
+          player.activePowerUps = player.activePowerUps.filter((p) => p.until > now);
+        }
         if (player.alive) {
           player.comboTimeout = Math.max(0, player.comboTimeout - dt);
           if (player.comboTimeout <= 0) player.combo = 1;
           this.updateMovement(player, dt);
           this.collectCrystals(player);
           this.collectDroppedEnergy(player);
+          this.collectPowerUps(player);
           if (player.totalScore > player.longestSnake * 8) {
             player.longestSnake = Math.max(player.longestSnake, Math.min(24, 5 + Math.floor(player.totalScore / 5)));
           }
