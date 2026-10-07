@@ -1,5 +1,6 @@
 const UI = (() => {
   const screens = {
+    splash: document.getElementById('splash-screen'),
     menu: document.getElementById('menu-screen'),
     lobby: document.getElementById('lobby-screen'),
     game: document.getElementById('game-screen')
@@ -42,6 +43,10 @@ const UI = (() => {
     powerUpsBar.className = 'powerups-bar';
     const hud = document.querySelector('.hud-left');
     if (hud) hud.appendChild(powerUpsBar);
+  }
+
+  function startMenu() {
+    showScreen('menu');
   }
 
   let notificationTimeout = null;
@@ -232,6 +237,7 @@ const UI = (() => {
 
   return {
     showScreen,
+    startMenu,
     showError,
     hideError,
     showNotification,

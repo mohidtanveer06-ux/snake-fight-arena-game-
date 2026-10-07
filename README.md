@@ -10,10 +10,11 @@ Collect glowing energy orbs, dodge moving obstacles, and compete against up to 1
 - Server-authoritative scoring and game state
 - Smooth camera following with interpolated remote player movement
 - Cyberpunk neon visuals with particles and glow effects
+- Animated MT SNAKE FIGHT ARENA welcome screen with a quick start into the existing room menu
 - Match timer with automatic round restarts
 - Live leaderboard, achievements, and persistent best score
-- Optional Web Audio sound effects with mute toggle
-- Mobile/tablet virtual D-pad controls
+- Synthesized Web Audio effects for buttons, crystal/power-up pickups, snake knockouts, respawns, and match results, with a persistent mute toggle
+- Responsive mobile/tablet UI with touch controls optimized for landscape play and a portrait-orientation hint
 - Responsive UI for desktop, laptop, and tablet
 
 ## Requirements
@@ -51,11 +52,11 @@ You should see:
 ## Playing the Game
 
 1. Open **http://localhost:3000** in your browser.
-2. Enter a username (2–16 characters, letters, numbers, spaces, `_`, or `-`).
-3. Click **PLAY**.
-4. Use **WASD** or **Arrow Keys** to move your glowing character.
-5. Collect energy orbs to increase your score.
-6. Avoid moving purple obstacles.
+2. Click **START GAME** on the animated welcome screen.
+3. Enter a username (2–16 characters, letters, numbers, spaces, `_`, or `-`).
+4. Create a room or enter a room code to join a friend.
+5. Use **WASD** or **Arrow Keys** to steer your snake.
+6. Collect crystals and power-ups to increase your score.
 7. Survive until the timer reaches zero — highest score wins!
 
 ### Controls
@@ -66,7 +67,7 @@ You should see:
 | Move Down | S / ↓ |
 | Move Left | A / ← |
 | Move Right | D / → |
-| Mute/Unmute | Click 🔊 button |
+| Mute/Unmute | Click the sound toggle |
 
 On mobile/tablet, use the on-screen D-pad in the bottom-left corner.
 
@@ -92,6 +93,7 @@ You can open up to 12 tabs for a full room test.
 └── public/
     ├── index.html     # Game HTML structure
     ├── style.css      # Neon UI styling
+    ├── audio.js       # Synthesized, muteable Web Audio effects
     ├── ui.js          # Menu, HUD, and overlay management
     └── game.js        # Canvas rendering, input, and multiplayer client
 ```
@@ -108,7 +110,7 @@ You can open up to 12 tabs for a full room test.
 
 - **Port in use**: Change the port with `PORT=3001 npm start` (or `set PORT=3001 && npm start` on Windows).
 - **Can't connect**: Make sure the server is running and you're accessing via `http://localhost:3000`, not opening the HTML file directly.
-- **No sound**: Click anywhere in the game first (browsers require user interaction for audio). Use the mute button to toggle sound.
+- **No sound**: Click a button first (browsers require user interaction for audio). Use the sound toggle to turn effects on or off.
 
 ## License
 

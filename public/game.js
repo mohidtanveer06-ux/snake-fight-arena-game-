@@ -483,10 +483,12 @@ const Game = (() => {
     const local = getLocalPlayer();
 
     if (local) {
+      const hasPreviousScore = lastPlayerScores.has(local.id);
       const prevScore = lastPlayerScores.get(local.id) || 0;
-      if (local.score > prevScore && prevScore > 0) {
+      if (hasPreviousScore && local.score > prevScore) {
         const gain = local.score - prevScore;
         if (gain >= 1) {
+          AudioFX.play('collect');
           spawnParticles(local.x, local.y, '#FFD166', 6 + Math.min(16, gain * 2), { speed: 2.5, life: 0.45 });
           UI.showScoreBump();
         }
@@ -495,11 +497,13 @@ const Game = (() => {
 
       const prevAlive = lastAliveStates.get(local.id);
       if (prevAlive && !local.alive) {
+        AudioFX.play('death');
         spawnParticles(local.x, local.y, local.color, 36, { speed: 5, life: 0.9, spread: 1.4, size: 6 });
         spawnParticles(local.x, local.y, '#ff6b6b', 20, { speed: 3.5, life: 0.7 });
         addScreenShake(14, 0.4);
         UI.showToast('You died! Respawning...');
       } else if (prevAlive === false && local.alive) {
+        AudioFX.play('respawn');
         spawnParticles(local.x, local.y, '#55F8FF', 24, { speed: 3, life: 0.7 });
         UI.showToast('Respawned!');
       }
@@ -514,6 +518,7 @@ const Game = (() => {
           for (const pu of collected) {
             const d = Math.hypot(local.x - pu.x, local.y - pu.y);
             if (d < 60) {
+              AudioFX.play('powerup');
               spawnParticles(pu.x, pu.y, pu.color, 28, { speed: 4, life: 0.6, size: 5 });
               UI.showToast(`${pu.emoji || ''} ${pu.name}!`);
             }
@@ -526,6 +531,7 @@ const Game = (() => {
       if (p.id === playerId) continue;
       const prevA = lastAliveStates.get(p.id);
       if (prevA && !p.alive) {
+        AudioFX.play('knockout');
         spawnParticles(p.x, p.y, p.color, 28, { speed: 4.5, life: 0.8, spread: 1.3, size: 5 });
       }
       lastAliveStates.set(p.id, p.alive);
@@ -604,6 +610,7 @@ const Game = (() => {
     });
 
     socket.on('gameStarted', (data) => {
+      AudioFX.play('start');
       UI.showNotification(data.message || 'Game starting');
       UI.hideEndScreen();
       particles = [];
@@ -614,6 +621,9 @@ const Game = (() => {
     });
 
     socket.on('gameState', (state) => {
+      if (state.phase === 'ended' && (!prevGameState || prevGameState.phase !== 'ended')) {
+        AudioFX.play('end');
+      }
       gameState = state;
       UI.updateHUD(state, playerId);
       try {
@@ -671,6 +681,10 @@ const Game = (() => {
   }
 
   function bindEvents() {
+    document.getElementById('splash-start-btn').addEventListener('click', () => {
+      UI.startMenu();
+    });
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('blur', () => {
       lastDirection = null;
@@ -872,11 +886,10 @@ const Game = (() => {
 
     window.addEventListener('resize', resizeCanvas);
     window.addEventListener('orientationchange', () => {
-      setTimeout(resizeCanvas, 200);
+      setTimeout(() => {
+        resizeCanvas();
+      }, 200);
     });
-    if (window.matchMedia('(orientation: portrait)').matches) {
-      document.getElementById('portrait-warning').classList.remove('hidden');
-    }
     if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
       const cm = document.getElementById('controls-mobile');
       if (cm) cm.classList.remove('hidden');

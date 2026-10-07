@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>MT SNAKE FIGHT ARENA</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,7 +11,34 @@
   </head>
   <body>
     <div id="app">
-      <div id="menu-screen" class="screen active">
+      <div id="splash-screen" class="screen active">
+        <div class="menu-bg"></div>
+        <div class="splash-orbit orbit-one" aria-hidden="true"></div>
+        <div class="splash-orbit orbit-two" aria-hidden="true"></div>
+        <div class="splash-content">
+          <div class="splash-mark" aria-hidden="true">
+            <span class="splash-snake">🐍</span>
+            <span class="splash-spark spark-one">✦</span>
+            <span class="splash-spark spark-two">✧</span>
+          </div>
+          <p class="splash-eyebrow">MULTIPLAYER BATTLE ARENA</p>
+          <h1 class="splash-title">
+            <span class="splash-mt">MT</span>
+            <span class="splash-game-name">SNAKE FIGHT</span>
+            <span class="splash-arena">ARENA</span>
+          </h1>
+          <p class="splash-tagline">GROW STRONG. OUTSLITHER. RULE THE ARENA.</p>
+          <div class="splash-features" aria-label="Game features">
+            <span>✦ Neon battles</span>
+            <span>✦ Power-ups</span>
+            <span>✦ Play with friends</span>
+          </div>
+          <button id="splash-start-btn" class="btn primary splash-start">START GAME <span aria-hidden="true">→</span></button>
+          <p class="splash-hint">CREATE A ROOM OR JOIN YOUR FRIENDS</p>
+        </div>
+      </div>
+
+      <div id="menu-screen" class="screen">
         <div class="menu-bg"></div>
         <div class="menu-content">
           <div class="title-block">
@@ -156,7 +183,7 @@
           <canvas id="minimap" width="180" height="140"></canvas>
         </div>
 
-        <div id="portrait-warning" class="portrait-warning hidden">
+        <div id="portrait-warning" class="portrait-warning">
           Rotate your device for the best arena view.
         </div>
 
@@ -188,11 +215,18 @@
               <button id="results-close-btn" class="btn ghost">Close</button>
             </div>
           </div>
+
         </div>
       </div>
+
+      <button id="sound-toggle" class="sound-toggle" type="button" data-sound-toggle aria-label="Mute sound" aria-pressed="false">
+        <span class="sound-icon" aria-hidden="true">🔊</span>
+        <span class="sound-label">SOUND ON</span>
+      </button>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="audio.js"></script>
     <script src="ui.js"></script>
     <script src="game.js"></script>
   </body>
