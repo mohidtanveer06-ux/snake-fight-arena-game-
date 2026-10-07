@@ -18,7 +18,9 @@ const TICK_MS = 1000 / TICK_RATE;
 const POWERUP_TYPES = {
   SPEED: { id: 'speed', name: 'Speed Boost', color: '#FFD166', duration: 5000, emoji: '⚡' },
   MAGNET: { id: 'magnet', name: 'Pellet Magnet', color: '#C084FC', duration: 8000, emoji: '🧲' },
-  SHIELD: { id: 'shield', name: 'Invincibility', color: '#55F8FF', duration: 6000, emoji: '🛡️' }
+  SHIELD: { id: 'shield', name: 'Invincibility', color: '#55F8FF', duration: 6000, emoji: '🛡️' },
+  GHOST: { id: 'ghost', name: 'Ghost Phase', color: '#94A3B8', duration: 5500, emoji: '👻' },
+  DOUBLE: { id: 'double', name: 'Double Score', color: '#FB7185', duration: 9000, emoji: '💎' }
 };
 
 // Movement settings
@@ -85,9 +87,10 @@ function createCrystal(type) {
     small: { value: 1, color: '#67E8F9', radius: 9 },
     blue: { value: 3, color: '#60A5FA', radius: 11 },
     rare: { value: 5, color: '#C084FC', radius: 14 },
-    gold: { value: 10, color: '#FBBF24', radius: 17 }
+    gold: { value: 10, color: '#FBBF24', radius: 17 },
+    mega: { value: 25, color: '#FFF7AE', radius: 24, mega: true }
   };
-  const crystalType = type || ['small', 'blue', 'rare', 'gold'][Math.floor(Math.random() * 4)];
+  const crystalType = type || ['small', 'small', 'small', 'blue', 'blue', 'rare', 'gold'][Math.floor(Math.random() * 7)];
   const spawn = randomSpawn();
   const data = types[crystalType];
   return {
@@ -97,12 +100,19 @@ function createCrystal(type) {
     y: spawn.y,
     value: data.value,
     radius: data.radius,
-    color: data.color
+    color: data.color,
+    mega: data.mega || false
   };
 }
 
 function createCrystalField(count = 18) {
-  return Array.from({ length: count }, (_, index) => createCrystal(index % 5 === 0 ? 'gold' : null));
+  const field = [];
+  for (let i = 0; i < count; i += 1) {
+    const isGold = i % 5 === 0;
+    const isMega = i % 17 === 0;
+    field.push(createCrystal(isMega ? 'mega' : isGold ? 'gold' : null));
+  }
+  return field;
 }
 
 function createEnergyDrop(value, x, y) {
@@ -212,13 +222,118 @@ class GameRoom {
       shieldUntil: 0,
       speedUntil: 0,
       magnetUntil: 0,
+      ghostUntil: 0,
+      doubleUntil: 0,
       activePowerUps: [],
       lastDeathReason: null,
       spawnAnimUntil: 0,
+      killCombo: 0,
+      lastKillAt: 0,
+      isBot: false,
       moveAccumulator: 0
     };
     this.players.set(id, player);
     return true;
+  }
+
+  addBotPlayer() {
+    if (this.players.size >= MAX_PLAYERS) return false;
+    const botNames = ['Viper', 'Bolt', 'Shadow', 'Fang', 'Cobra', 'Rush'];
+    const usedColors = new Set(Array.from(this.players.values()).map((p) => p.color));
+    const usedNames = new Set(Array.from(this.players.values()).map((p) => p.username));
+    const color = PLAYER_COLORS.find((entry) => !usedColors.has(entry)) || PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)];
+    const name = botNames.find((n) => !usedNames.has(n)) || 'Bot' + Math.floor(Math.random() * 999);
+    const spawn = this.findSafeSpawn(180);
+    const id = `bot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const player = {
+      id,
+      username: name,
+      color,
+      x: spawn.x,
+      y: spawn.y,
+      dirX: 1,
+      dirY: 0,
+      alive: true,
+      input: { up: false, down: false, left: false, right: false },
+      segments: buildSegments(spawn.x, spawn.y, 5),
+      score: 0,
+      totalScore: 0,
+      crystalsCollected: 0,
+      eliminations: 0,
+      deaths: 0,
+      longestSnake: 5,
+      combo: 1,
+      comboTimeout: 0,
+      respawnAt: 0,
+      shieldUntil: 0,
+      speedUntil: 0,
+      magnetUntil: 0,
+      ghostUntil: 0,
+      doubleUntil: 0,
+      activePowerUps: [],
+      lastDeathReason: null,
+      spawnAnimUntil: 0,
+      killCombo: 0,
+      lastKillAt: 0,
+      isBot: true,
+      botNextDirAt: 0,
+      botDir: 'right',
+      moveAccumulator: 0
+    };
+    this.players.set(id, player);
+    return true;
+  }
+
+  fillBots(target = Math.max(2, Math.min(6, this.players.size + 1))) {
+    while (this.players.size < target) {
+      const added = this.addBotPlayer();
+      if (!added) break;
+    }
+  }
+
+  updateBotAI(player) {
+    if (!player.isBot || !player.alive) return;
+    const now = Date.now();
+    if (now < player.botNextDirAt) return;
+    const dirs = ['up', 'down', 'left', 'right'];
+    const opposite = { up: 'down', down: 'up', left: 'right', right: 'left' };
+    const current = player.botDir;
+
+    let targetDir = current;
+    let bestScore = -Infinity;
+    for (const dir of dirs) {
+      if (dir === opposite[current]) continue;
+      const vec = dir === 'up' ? [0, -1] : dir === 'down' ? [0, 1] : dir === 'left' ? [-1, 0] : [1, 0];
+      const fx = player.x + vec[0] * 140;
+      const fy = player.y + vec[1] * 140;
+      if (fx < 80 || fx > ARENA_WIDTH - 80 || fy < 80 || fy > ARENA_HEIGHT - 80) continue;
+      let s = 0;
+      const closestCrystal = this.crystals.reduce((acc, c) => {
+        const d = Math.hypot(fx - c.x, fy - c.y);
+        return d < acc.d ? { d, c } : acc;
+      }, { d: Infinity, c: null });
+      if (closestCrystal.c) {
+        const reward = closestCrystal.c.value * 10;
+        s += reward / (1 + Math.hypot(player.x + vec[0] * 40 - closestCrystal.c.x, player.y + vec[1] * 40 - closestCrystal.c.y));
+      }
+      for (const other of this.players.values()) {
+        if (other.id === player.id || !other.alive) continue;
+        const d = Math.hypot(fx - other.x, fy - other.y);
+        if (d < 100) s -= (100 - d) * 2;
+      }
+      const r = Math.random() * 0.4;
+      s += r;
+      if (s > bestScore) { bestScore = s; targetDir = dir; }
+    }
+
+    const vec = targetDir === 'up' ? [0, -1] : targetDir === 'down' ? [0, 1] : targetDir === 'left' ? [-1, 0] : [1, 0];
+    player.input.up = false; player.input.down = false; player.input.left = false; player.input.right = false;
+    if (vec[0] === 1) player.input.right = true;
+    else if (vec[0] === -1) player.input.left = true;
+    else if (vec[1] === 1) player.input.down = true;
+    else if (vec[1] === -1) player.input.up = true;
+    player.botDir = targetDir;
+    player.botNextDirAt = now + 250 + Math.random() * 450;
   }
 
   removePlayer(id) {
@@ -278,9 +393,13 @@ class GameRoom {
         shieldUntil: player.shieldUntil,
         speedUntil: player.speedUntil,
         magnetUntil: player.magnetUntil,
+        ghostUntil: player.ghostUntil,
+        doubleUntil: player.doubleUntil,
         activePowerUps: player.activePowerUps,
         spawnAnimUntil: player.spawnAnimUntil,
         lastDeathReason: player.lastDeathReason,
+        killCombo: player.killCombo,
+        isBot: player.isBot,
         isHost: player.id === this.hostId
       })),
       crystals: this.crystals,
@@ -319,14 +438,23 @@ class GameRoom {
     player.shieldUntil = Date.now() + 2000;
     player.speedUntil = 0;
     player.magnetUntil = 0;
+    player.ghostUntil = 0;
+    player.doubleUntil = 0;
     player.activePowerUps = [];
     player.spawnAnimUntil = Date.now() + 1200;
     player.respawnAt = 0;
     player.lastDeathReason = null;
+    player.killCombo = 0;
+    player.lastKillAt = 0;
+    if (player.isBot) {
+      player.botNextDirAt = Date.now() + 500;
+      player.botDir = 'right';
+    }
     player.moveAccumulator = 0;
   }
 
   startMatch() {
+    if (this.players.size < 2) this.fillBots(4);
     if (this.players.size < 2) return false;
     this.phase = 'countdown';
     this.countdown = 3;
@@ -337,6 +465,8 @@ class GameRoom {
     this.droppedEnergy = [];
     this.powerUps = [];
     this.nextPowerUpAt = Date.now() + 8000;
+    this.nextMegaCrystalAt = Date.now() + 20000;
+    this.killBonuses = [];
     this.players.forEach((player) => this.resetPlayerForMatch(player));
     return true;
   }
@@ -350,7 +480,10 @@ class GameRoom {
     this.droppedEnergy = [];
     this.powerUps = [];
     this.nextPowerUpAt = 0;
-    this.players.forEach((player) => {
+    this.nextMegaCrystalAt = 0;
+    this.killBonuses = [];
+    for (const [id, player] of this.players) {
+      if (player.isBot) { this.players.delete(id); continue; }
       const spawn = this.findSafeSpawn(160);
       player.x = spawn.x;
       player.y = spawn.y;
@@ -364,12 +497,16 @@ class GameRoom {
       player.shieldUntil = 0;
       player.speedUntil = 0;
       player.magnetUntil = 0;
+      player.ghostUntil = 0;
+      player.doubleUntil = 0;
       player.activePowerUps = [];
       player.spawnAnimUntil = 0;
       player.respawnAt = 0;
       player.lastDeathReason = null;
+      player.killCombo = 0;
+      player.lastKillAt = 0;
       player.moveAccumulator = 0;
-    });
+    }
   }
 
   updateMovement(player, dt) {
