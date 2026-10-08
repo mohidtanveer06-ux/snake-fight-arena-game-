@@ -29,7 +29,7 @@ const Game = (() => {
   let swipeStart = null;
 
   function resizeCanvas() {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     canvas.width = window.innerWidth * dpr;
     canvas.height = window.innerHeight * dpr;
     canvas.style.width = `${window.innerWidth}px`;
@@ -285,7 +285,8 @@ const Game = (() => {
   function drawSnake(player, local) {
     if (!player.segments || !player.segments.length) return;
     const now = Date.now();
-    const points = player.segments.map((segment) => ({ x: segment.x - camera.x, y: segment.y - camera.y }));
+    const headX = player.segments[0].x - camera.x;
+    const headY = player.segments[0].y - camera.y;
     const hasSpeed = player.speedUntil > now;
     const hasMagnet = player.magnetUntil > now;
     const hasShield = player.shieldUntil > now;
@@ -295,13 +296,12 @@ const Game = (() => {
     const eyeR = 4.2;
 
     if (hasMagnet && local) {
-      const hp = points[0];
       ctx.save();
       ctx.strokeStyle = 'rgba(192, 132, 252, 0.38)';
       ctx.lineWidth = 2;
       ctx.setLineDash([10, 8]);
       ctx.beginPath();
-      ctx.arc(hp.x, hp.y, 180, 0, Math.PI * 2);
+      ctx.arc(headX, headY, 180, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
@@ -313,29 +313,35 @@ const Game = (() => {
       ctx.globalAlpha = clamp(t * 1.5, 0.2, 1);
     }
 
-    for (let i = points.length - 1; i >= 0; i -= 1) {
-      const p = points[i];
+    ctx.beginPath();
+    for (let i = player.segments.length - 1; i >= 0; i -= 1) {
+      const segment = player.segments[i];
+      const x = segment.x - camera.x;
+      const y = segment.y - camera.y;
       const r = i === 0 ? headRadius : bodyRadius - Math.min(6, i * 0.18);
-      const shade = Math.max(0.72, 1 - i * 0.015);
-      ctx.save();
-      ctx.shadowColor = player.color;
-      ctx.shadowBlur = local ? 18 : 10;
-      if (hasSpeed) ctx.shadowColor = '#FFD166';
-      ctx.fillStyle = player.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(p.x - r * 0.35, p.y - r * 0.35, r * 0.35, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+      ctx.moveTo(x + r, y);
+      ctx.arc(x, y, r, 0, Math.PI * 2);
     }
+    ctx.shadowColor = hasSpeed ? '#FFD166' : player.color;
+    ctx.shadowBlur = local ? 18 : 10;
+    ctx.fillStyle = player.color;
+    ctx.fill();
+    ctx.shadowBlur = 0;
 
-    const headX = points[0].x;
-    const headY = points[0].y;
+    const snakeAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    for (let i = player.segments.length - 1; i >= 0; i -= 1) {
+      const segment = player.segments[i];
+      const x = segment.x - camera.x;
+      const y = segment.y - camera.y;
+      const r = i === 0 ? headRadius : bodyRadius - Math.min(6, i * 0.18);
+      ctx.moveTo(x, y - r * 0.35);
+      ctx.arc(x - r * 0.35, y - r * 0.35, r * 0.35, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    ctx.globalAlpha = snakeAlpha;
 
     if (hasSpeed) {
       const dx = player.dirX || 1;
@@ -570,9 +576,17 @@ const Game = (() => {
 
   let lastRenderTime = performance.now();
   function loop(now) {
+    animationFrame = null;
+    if (!gameState) return;
     const dt = Math.min(0.05, (now - lastRenderTime) / 1000);
     lastRenderTime = now;
     render(dt);
+    animationFrame = requestAnimationFrame(loop);
+  }
+
+  function startRenderLoop() {
+    if (animationFrame !== null || !gameState) return;
+    lastRenderTime = performance.now();
     animationFrame = requestAnimationFrame(loop);
   }
 
@@ -625,6 +639,7 @@ const Game = (() => {
         AudioFX.play('end');
       }
       gameState = state;
+      startRenderLoop();
       UI.updateHUD(state, playerId);
       try {
         const local = state.players && state.players.find((p) => p.id === playerId);
@@ -896,9 +911,6 @@ const Game = (() => {
       const j = document.getElementById('joystick');
       if (j) j.classList.remove('hidden');
     }
-    lastRenderTime = performance.now();
-    animationFrame = requestAnimationFrame(loop);
-
     window.addEventListener('beforeunload', () => {
       if (inputTimerId) clearInterval(inputTimerId);
     });

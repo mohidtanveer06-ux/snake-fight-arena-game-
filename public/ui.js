@@ -37,6 +37,8 @@ const UI = (() => {
   };
 
   let powerUpsBar = document.getElementById('powerups-bar');
+  let lastPowerUpsRenderAt = 0;
+  let lastLeaderboardKey = null;
   if (!powerUpsBar) {
     powerUpsBar = document.createElement('div');
     powerUpsBar.id = 'powerups-bar';
@@ -53,6 +55,7 @@ const UI = (() => {
   let toastTimeout = null;
 
   function showScreen(name) {
+    if (screens[name].classList.contains('active')) return;
     Object.values(screens).forEach((screen) => screen.classList.remove('active'));
     screens[name].classList.add('active');
   }
@@ -96,11 +99,13 @@ const UI = (() => {
 
   function renderActivePowerUps(player) {
     if (!powerUpsBar) return;
+    const now = Date.now();
+    if (now - lastPowerUpsRenderAt < 200) return;
+    lastPowerUpsRenderAt = now;
     if (!player || !player.activePowerUps || player.activePowerUps.length === 0) {
-      powerUpsBar.innerHTML = '';
+      if (powerUpsBar.childElementCount) powerUpsBar.innerHTML = '';
       return;
     }
-    const now = Date.now();
     powerUpsBar.innerHTML = player.activePowerUps
       .filter((pu) => pu.until > now)
       .map((pu) => {
@@ -153,15 +158,22 @@ const UI = (() => {
   function updateHUD(state, playerId) {
     const me = state.players.find((player) => player.id === playerId);
     if (me) {
-      els.hudUsername.textContent = me.username;
-      els.hudUsername.style.color = me.color;
-      els.hudScore.textContent = String(me.score || 0);
+      if (els.hudUsername.textContent !== me.username) els.hudUsername.textContent = me.username;
+      if (els.hudUsername.dataset.playerColor !== me.color) {
+        els.hudUsername.style.color = me.color;
+        els.hudUsername.dataset.playerColor = me.color;
+      }
+      const score = String(me.score || 0);
+      if (els.hudScore.textContent !== score) els.hudScore.textContent = score;
       renderActivePowerUps(me);
     }
 
-    els.roomCodeHud.textContent = state.roomCode || '—';
-    els.playerCount.textContent = `${state.playerCount}/${state.maxPlayers}`;
-    els.hudTimer.textContent = formatTime(state.timeLeft || 0);
+    const roomCode = state.roomCode || '—';
+    if (els.roomCodeHud.textContent !== roomCode) els.roomCodeHud.textContent = roomCode;
+    const playerCount = `${state.playerCount}/${state.maxPlayers}`;
+    if (els.playerCount.textContent !== playerCount) els.playerCount.textContent = playerCount;
+    const timer = formatTime(state.timeLeft || 0);
+    if (els.hudTimer.textContent !== timer) els.hudTimer.textContent = timer;
 
     if (state.timeLeft && state.timeLeft <= 30) {
       els.hudTimer.classList.add('warning');
@@ -183,6 +195,11 @@ const UI = (() => {
       els.hudCountdown.classList.add('hidden');
     }
 
+    const leaderboardKey = state.players
+      .map((player) => `${player.id}:${player.totalScore || player.score || 0}:${player.alive ? 1 : 0}`)
+      .join('|');
+    if (leaderboardKey === lastLeaderboardKey) return;
+    lastLeaderboardKey = leaderboardKey;
     const ordered = [...state.players].sort((a, b) => (b.totalScore || b.score || 0) - (a.totalScore || a.score || 0));
     els.leaderboardList.innerHTML = ordered.map((player, index) => {
       const highlight = player.id === playerId ? ' class="you"' : '';
