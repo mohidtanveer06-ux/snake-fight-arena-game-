@@ -57,12 +57,18 @@
           </div>
 
           <div class="menu-actions">
-            <button id="create-room-btn" class="btn primary">Create Room</button>
+            <button id="practice-btn" class="btn primary">Play vs Bots</button>
+            <button id="create-room-btn" class="btn secondary">Create Room</button>
             <div class="join-row">
               <input id="room-code-input" type="text" maxlength="6" placeholder="MT82KQ" />
               <button id="join-room-btn" class="btn secondary">Join Room</button>
             </div>
             <button id="howto-btn" class="btn ghost">How to Play</button>
+          </div>
+
+          <div id="offline-banner" class="offline-banner hidden">
+            <strong>OFFLINE PRACTICE</strong>
+            <span>No game server found, so you are playing against bots. For multiplayer run <code>npm start</code> and open <code>http://localhost:3000</code>.</span>
           </div>
 
           <div class="menu-meta">
@@ -84,6 +90,8 @@
             <li>Head-to-body and head-to-tail collisions kill the attacker.</li>
             <li>Avoid your own body and the arena walls.</li>
             <li>Survive until the timer hits zero to win the match.</li>
+            <li>Chain knockouts within 5 seconds for DOUBLE KILL, TRIPLE KILL and RAMPAGE streaks.</li>
+            <li>Playing alone? Hit <strong>Play vs Bots</strong> for an instant match, or set the bot count in the lobby.</li>
           </ul>
           <button id="howto-close" class="btn primary">Close</button>
         </div>
@@ -121,6 +129,17 @@
                   <option value="300" selected>5 Minutes</option>
                   <option value="600">10 Minutes</option>
                   <option value="900">15 Minutes</option>
+                </select>
+              </div>
+              <div class="match-row">
+                <span>Bots</span>
+                <select id="bot-count-select">
+                  <option value="0">No bots</option>
+                  <option value="1">1 Bot</option>
+                  <option value="2">2 Bots</option>
+                  <option value="3" selected>3 Bots</option>
+                  <option value="4">4 Bots</option>
+                  <option value="5">5 Bots</option>
                 </select>
               </div>
               <div class="match-row">
@@ -179,6 +198,8 @@
         <div id="notification" class="notification hidden"></div>
         <div id="toast" class="toast hidden"></div>
 
+        <div id="kill-feed" class="kill-feed" aria-live="polite"></div>
+
         <div id="minimap-wrap" class="minimap-wrap">
           <canvas id="minimap" width="180" height="140"></canvas>
         </div>
@@ -227,6 +248,7 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="audio.js"></script>
+    <script src="game-core.js"></script>
     <script src="ui.js"></script>
     <script src="game.js"></script>
   </body>

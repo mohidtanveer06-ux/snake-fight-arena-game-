@@ -18,6 +18,11 @@ const Game = (() => {
   let camera = { x: 0, y: 0 };
   let initialized = false;
   let socket = null;
+  let offline = false;
+  let hasConnected = false;
+  let connectionWatchdog = null;
+  let pendingAutostart = false;
+  let seenKillIds = [];
 
   let particles = [];
   let screenShake = { intensity: 0, time: 0 };
@@ -507,7 +512,7 @@ const Game = (() => {
         spawnParticles(local.x, local.y, local.color, 36, { speed: 5, life: 0.9, spread: 1.4, size: 6 });
         spawnParticles(local.x, local.y, '#ff6b6b', 20, { speed: 3.5, life: 0.7 });
         addScreenShake(14, 0.4);
-        UI.showToast('You died! Respawning...');
+        UI.showToast(local.lastDeathReason ? `You died — ${local.lastDeathReason}` : 'You died! Respawning...');
       } else if (prevAlive === false && local.alive) {
         AudioFX.play('respawn');
         spawnParticles(local.x, local.y, '#55F8FF', 24, { speed: 3, life: 0.7 });
@@ -590,24 +595,80 @@ const Game = (() => {
     animationFrame = requestAnimationFrame(loop);
   }
 
-  function connect() {
-    if (socket) return;
-    socket = io();
+  function pushKillFeedItem(entry) {
+    const feed = document.getElementById('kill-feed');
+    if (!feed) return;
+    const killerName = entry.killerName ? UI.escapeHtml(entry.killerName) : 'THE ARENA';
+    const victimName = UI.escapeHtml(entry.victimName);
+    const killerColor = entry.killerColor || '#ffffff';
+    const victimColor = entry.victimColor || '#ffffff';
 
-    socket.on('connect', () => {
-      UI.showNotification('Connected');
+    const item = document.createElement('div');
+    item.className = 'kill-feed-item';
+    if (entry.streakLabel) item.classList.add('streak');
+    item.innerHTML = `
+      <span class="kf-killer" style="color:${killerColor}">${killerName}</span>
+      <span class="kf-x">✖</span>
+      <span class="kf-victim" style="color:${victimColor}">${victimName}</span>
+      ${entry.streakLabel ? `<span class="kf-streak">${UI.escapeHtml(entry.streakLabel)}</span>` : ''}
+    `;
+    feed.appendChild(item);
+
+    AudioFX.play('knockout');
+    if (entry.streakLabel) {
+      UI.showToast(`${entry.streakLabel}! ${killerName}`);
+      addScreenShake(7, 0.3);
+    }
+
+    setTimeout(() => item.classList.add('out'), 3200);
+    setTimeout(() => {
+      if (item.parentNode) item.parentNode.removeChild(item);
+    }, 3800);
+    while (feed.childElementCount > 4) {
+      feed.removeChild(feed.firstElementChild);
+    }
+  }
+
+  function processKillFeed(state) {
+    if (!state.killFeed || state.killFeed.length === 0) return;
+    const now = Date.now();
+    for (const entry of state.killFeed) {
+      if (seenKillIds.indexOf(entry.id) !== -1) continue;
+      seenKillIds.push(entry.id);
+      if (seenKillIds.length > 40) seenKillIds.shift();
+      if (entry.at && now - entry.at > 10000) continue; // ignore history from a match we just joined
+      pushKillFeedItem(entry);
+    }
+  }
+
+  function bindSocketHandlers(sock) {
+    sock.on('connect', () => {
+      hasConnected = true;
+      if (connectionWatchdog) {
+        clearTimeout(connectionWatchdog);
+        connectionWatchdog = null;
+      }
+      UI.showNotification(offline ? 'Offline practice mode' : 'Connected');
     });
 
-    socket.on('roomCreated', ({ roomCode: code, playerId: id, isHost: hostFlag, lobby }) => {
+    sock.on('connect_error', () => {
+      if (!hasConnected && !offline) startOffline('Could not reach the game server');
+    });
+
+    sock.on('roomCreated', ({ roomCode: code, playerId: id, isHost: hostFlag, lobby }) => {
       playerId = id;
       roomCode = code;
       isHost = hostFlag;
       UI.showScreen('lobby');
       UI.updateLobby(lobby, id);
-      UI.showNotification('Room created');
+      UI.showNotification(offline ? 'Practice room ready' : 'Room created');
+      if (pendingAutostart) {
+        pendingAutostart = false;
+        sock.emit('startGame');
+      }
     });
 
-    socket.on('roomJoined', ({ roomCode: code, playerId: id, isHost: hostFlag, lobby }) => {
+    sock.on('roomJoined', ({ roomCode: code, playerId: id, isHost: hostFlag, lobby }) => {
       playerId = id;
       roomCode = code;
       isHost = hostFlag;
@@ -616,31 +677,33 @@ const Game = (() => {
       UI.showNotification('Room joined');
     });
 
-    socket.on('lobbyUpdate', (lobby) => {
+    sock.on('lobbyUpdate', (lobby) => {
       UI.updateLobby(lobby, playerId);
       if (lobby.phase === 'lobby') {
         UI.showScreen('lobby');
       }
     });
 
-    socket.on('gameStarted', (data) => {
+    sock.on('gameStarted', (data) => {
       AudioFX.play('start');
       UI.showNotification(data.message || 'Game starting');
       UI.hideEndScreen();
       particles = [];
+      seenKillIds = [];
       lastPlayerScores.clear();
       lastAliveStates.clear();
       lastCrystalCount = 0;
       lastPowerUpCount = 0;
     });
 
-    socket.on('gameState', (state) => {
+    sock.on('gameState', (state) => {
       if (state.phase === 'ended' && (!prevGameState || prevGameState.phase !== 'ended')) {
         AudioFX.play('end');
       }
       gameState = state;
       startRenderLoop();
       UI.updateHUD(state, playerId);
+      processKillFeed(state);
       try {
         const local = state.players && state.players.find((p) => p.id === playerId);
         if (local && (local.dirX !== undefined || local.dirY !== undefined)) {
@@ -662,37 +725,83 @@ const Game = (() => {
       }
     });
 
-    socket.on('playerJoined', (data) => {
+    sock.on('playerJoined', (data) => {
       UI.showNotification(data.message);
     });
 
-    socket.on('playerLeft', (data) => {
+    sock.on('playerLeft', (data) => {
       UI.showNotification(data.message);
     });
 
-    socket.on('hostChanged', (data) => {
-      if (gameState && gameState.hostId === playerId) {
-        isHost = true;
-      } else {
-        isHost = false;
-      }
+    sock.on('hostChanged', (data) => {
+      isHost = !!gameState && gameState.hostId === playerId;
       UI.showNotification(data.message || 'Host changed');
     });
 
-    socket.on('joinError', (data) => {
+    sock.on('joinError', (data) => {
+      pendingAutostart = false;
       UI.showError(data.message, 'menu');
+      UI.showError(data.message, 'lobby');
     });
 
-    socket.on('leftRoom', () => {
+    sock.on('leftRoom', () => {
       playerId = null;
       roomCode = null;
       isHost = false;
       gameState = null;
+      prevGameState = null;
       particles = [];
+      seenKillIds = [];
+      const feed = document.getElementById('kill-feed');
+      if (feed) feed.innerHTML = '';
       UI.showScreen('menu');
       UI.hideEndScreen();
       UI.hideError('menu');
     });
+  }
+
+  function startOffline(reason) {
+    if (offline) return;
+    offline = true;
+    if (connectionWatchdog) {
+      clearTimeout(connectionWatchdog);
+      connectionWatchdog = null;
+    }
+    if (socket) {
+      try {
+        if (socket.removeAllListeners) socket.removeAllListeners();
+        socket.disconnect();
+      } catch (error) {
+        // ignore: the socket was never usable
+      }
+    }
+    if (!window.GameCore || typeof window.GameCore.createLocalSocket !== 'function') {
+      UI.showError('game-core.js failed to load, so the game cannot start. Please reload the page.', 'menu');
+      return;
+    }
+    socket = window.GameCore.createLocalSocket();
+    bindSocketHandlers(socket);
+    UI.setOfflineMode(reason);
+  }
+
+  function connect() {
+    if (socket) return;
+    if (typeof window.io !== 'function') {
+      // Opened without the Node server (for example by double-clicking index.html).
+      startOffline('No game server detected');
+      return;
+    }
+    try {
+      socket = window.io();
+    } catch (error) {
+      socket = null;
+      startOffline('Socket.IO failed to load');
+      return;
+    }
+    bindSocketHandlers(socket);
+    connectionWatchdog = setTimeout(() => {
+      if (!hasConnected && !offline) startOffline('Could not reach the game server');
+    }, 5000);
   }
 
   function bindEvents() {
@@ -816,12 +925,26 @@ const Game = (() => {
     canvas.addEventListener('pointerup', () => { swipeStart = null; });
     canvas.addEventListener('pointercancel', () => { swipeStart = null; });
 
+    document.getElementById('practice-btn').addEventListener('click', () => {
+      let username = UI.getUsername();
+      if (!username) {
+        username = `Player${Math.floor(100 + Math.random() * 900)}`;
+        UI.setUsername(username);
+      }
+      UI.hideError('menu');
+      // Create a room and jump straight into a match filled with bots.
+      pendingAutostart = true;
+      socket.emit('createRoom', { username });
+    });
+
     document.getElementById('create-room-btn').addEventListener('click', () => {
       const username = UI.getUsername();
       if (!username) {
         UI.showError('Please enter a username.', 'menu');
         return;
       }
+      UI.hideError('menu');
+      pendingAutostart = false;
       socket.emit('createRoom', { username });
     });
 
@@ -836,6 +959,8 @@ const Game = (() => {
         UI.showError('Enter a room code.', 'menu');
         return;
       }
+      UI.hideError('menu');
+      pendingAutostart = false;
       socket.emit('joinRoom', { username, roomCode: room });
     });
 
@@ -870,6 +995,12 @@ const Game = (() => {
     document.getElementById('match-duration-select').addEventListener('change', (event) => {
       if (socket && isHost) {
         socket.emit('setMatchDuration', { duration: Number(event.target.value) });
+      }
+    });
+
+    document.getElementById('bot-count-select').addEventListener('change', (event) => {
+      if (socket && isHost) {
+        socket.emit('setBotCount', { count: Number(event.target.value) });
       }
     });
 

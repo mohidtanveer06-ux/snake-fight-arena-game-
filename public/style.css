@@ -2014,3 +2014,163 @@ html, body {
 
   .sound-toggle:hover { transform: translate(-50%, -2px); }
 }
+
+/* ===================== Offline practice notice ===================== */
+
+.offline-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  border-radius: 12px;
+  background: rgba(255, 209, 102, 0.07);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.offline-banner strong {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.16rem;
+  color: var(--yellow);
+}
+
+.offline-banner span {
+  color: var(--muted);
+}
+
+.offline-banner code {
+  padding: 0.08rem 0.32rem;
+  border-radius: 5px;
+  background: rgba(85, 248, 255, 0.12);
+  color: var(--cyan);
+  font-size: 0.78rem;
+}
+
+/* ===================== Bot badge in the lobby list ===================== */
+
+#lobby-player-list li > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-pill {
+  margin-left: auto;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.08rem;
+  text-transform: uppercase;
+  border-radius: 999px;
+  background: rgba(126, 114, 255, 0.16);
+  color: var(--purple);
+}
+
+/* ===================== Kill feed (knockout streaks) ===================== */
+
+.kill-feed {
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  width: min(250px, 46vw);
+  pointer-events: none;
+}
+
+.kill-feed-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 100%;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(8, 11, 21, 0.82);
+  border: 1px solid rgba(255, 45, 149, 0.32);
+  box-shadow: 0 0 14px rgba(255, 45, 149, 0.16);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: killFeedIn 0.24s ease-out;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+.kill-feed-item.streak {
+  border-color: rgba(255, 209, 102, 0.6);
+  box-shadow: 0 0 20px rgba(255, 209, 102, 0.35);
+}
+
+.kill-feed-item.out {
+  opacity: 0;
+  transform: translateX(24px);
+}
+
+.kf-killer,
+.kf-victim {
+  max-width: 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kf-x {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.kf-streak {
+  padding: 0.1rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(255, 209, 102, 0.18);
+  color: var(--yellow);
+  font-size: 0.6rem;
+  letter-spacing: 0.1rem;
+  text-transform: uppercase;
+}
+
+@keyframes killFeedIn {
+  from { opacity: 0; transform: translateX(24px) scale(0.96); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@media (max-width: 700px) {
+  .kill-feed {
+    right: 0.6rem;
+    width: min(200px, 52vw);
+    gap: 0.3rem;
+  }
+
+  .kill-feed-item {
+    font-size: 0.72rem;
+    padding: 0.32rem 0.55rem;
+  }
+
+  .kf-streak {
+    font-size: 0.54rem;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .kill-feed {
+    right: max(0.45rem, env(safe-area-inset-right));
+    width: min(190px, 26vw);
+    gap: 0.25rem;
+  }
+
+  .kill-feed-item {
+    font-size: 0.68rem;
+    padding: 0.28rem 0.5rem;
+  }
+
+  .kf-streak {
+    display: none;
+  }
+}

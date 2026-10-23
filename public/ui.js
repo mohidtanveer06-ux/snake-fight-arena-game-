@@ -15,6 +15,8 @@ const UI = (() => {
     lobbyHostName: document.getElementById('lobby-host-name'),
     lobbyError: document.getElementById('lobby-error'),
     matchDurationSelect: document.getElementById('match-duration-select'),
+    botCountSelect: document.getElementById('bot-count-select'),
+    offlineBanner: document.getElementById('offline-banner'),
     startGameBtn: document.getElementById('start-game-btn'),
     leaveRoomBtn: document.getElementById('leave-room-btn'),
     usernameInput: document.getElementById('username-input'),
@@ -126,11 +128,16 @@ const UI = (() => {
 
   function updateLobby(lobby, playerId) {
     const hostPlayer = lobby.players.find((player) => player.id === lobby.hostId);
+    const botCount = Number(lobby.botCount) || 0;
+    const hostView = lobby.hostId === playerId;
+
     els.lobbyRoomCode.textContent = lobby.roomCode;
     els.lobbyPlayerCount.textContent = `${lobby.playerCount}/${lobby.maxPlayers}`;
     els.lobbyHostName.textContent = hostPlayer ? hostPlayer.username : '—';
     els.matchDurationSelect.value = String(lobby.matchDuration || 300);
-    els.matchDurationSelect.disabled = lobby.hostId !== playerId;
+    els.matchDurationSelect.disabled = !hostView;
+    els.botCountSelect.value = String(botCount);
+    els.botCountSelect.disabled = !hostView;
 
     els.lobbyPlayerList.innerHTML = Array.from({ length: lobby.maxPlayers }, (_, index) => {
       const player = lobby.players[index];
@@ -138,21 +145,31 @@ const UI = (() => {
         return '<li><span class="player-dot" style="background: rgba(255,255,255,0.2);"></span><span>Empty</span></li>';
       }
       const hostBadge = player.isHost ? '<span class="host-pill">Host</span>' : '';
+      const botBadge = player.isBot ? '<span class="bot-pill">Bot</span>' : '';
       const youBadge = player.id === playerId ? '<span class="you-pill">You</span>' : '';
       return `
         <li>
           <span class="player-dot" style="background:${player.color}; color:${player.color};"></span>
           <span>${escapeHtml(player.username)}</span>
           ${hostBadge}
+          ${botBadge}
           ${youBadge}
         </li>
       `;
     }).join('');
 
-    const hostView = lobby.hostId === playerId;
+    const totalPlayers = lobby.playerCount + botCount;
     els.startGameBtn.classList.toggle('hidden', !hostView);
-    els.startGameBtn.disabled = lobby.playerCount < 2;
-    els.lobbyStatus.textContent = hostView ? 'You are the host.' : 'Waiting for host...';
+    els.startGameBtn.disabled = totalPlayers < 2;
+    if (!hostView) {
+      els.lobbyStatus.textContent = 'Waiting for host...';
+    } else if (totalPlayers < 2) {
+      els.lobbyStatus.textContent = 'Add a bot or wait for a friend.';
+    } else {
+      els.lobbyStatus.textContent = botCount > 0
+        ? `You are the host. ${botCount} bot${botCount === 1 ? '' : 's'} will join.`
+        : 'You are the host.';
+    }
   }
 
   function updateHUD(state, playerId) {
@@ -248,6 +265,25 @@ const UI = (() => {
     return els.usernameInput.value.trim();
   }
 
+  function setUsername(value) {
+    els.usernameInput.value = value;
+  }
+
+  function getBotCount() {
+    return Number(els.botCountSelect.value) || 0;
+  }
+
+  function setOfflineMode(reason) {
+    if (!els.offlineBanner) return;
+    els.offlineBanner.classList.remove('hidden');
+    if (reason) {
+      const note = els.offlineBanner.querySelector('span');
+      if (note) {
+        note.textContent = `${reason}. You can still play against bots — for multiplayer run "npm start" and open http://localhost:3000.`;
+      }
+    }
+  }
+
   function getRoomCode() {
     return els.roomCodeInput.value.trim().toUpperCase();
   }
@@ -264,7 +300,11 @@ const UI = (() => {
     updateHUD,
     showEndScreen,
     hideEndScreen,
+    escapeHtml,
     getUsername,
+    setUsername,
+    getBotCount,
+    setOfflineMode,
     getRoomCode,
     els
   };
