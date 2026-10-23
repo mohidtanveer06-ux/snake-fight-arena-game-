@@ -1095,48 +1095,6 @@ select {
   background: rgba(255, 255, 255, 0.1);
 }
 
-/* ===== MOBILE CONTROLS ===== */
-.mobile-controls {
-  position: absolute;
-  bottom: 1.5rem;
-  left: 1.5rem;
-  pointer-events: auto;
-  z-index: 40;
-}
-
-.dpad {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-.dpad-row {
-  display: flex;
-  gap: 4px;
-}
-
-.dpad-btn {
-  width: 52px;
-  height: 52px;
-  background: rgba(0, 245, 212, 0.15);
-  border: 2px solid rgba(0, 245, 212, 0.4);
-  border-radius: 10px;
-  color: var(--neon-cyan);
-  font-size: 1.2rem;
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: manipulation;
-  transition: background 0.15s;
-}
-
-.dpad-btn:active,
-.dpad-btn.active {
-  background: rgba(0, 245, 212, 0.35);
-  box-shadow: var(--glow-cyan);
-}
-
 /* ===== ROUND COMPLETE ===== */
 .round-complete {
   position: absolute;
@@ -1496,25 +1454,24 @@ select {
   }
   .minimap-wrap {
     left: 0.6rem;
-    bottom: auto;
-    top: auto;
+    bottom: 0.6rem;
   }
   #minimap {
     width: 120px;
     height: 90px;
   }
   .dpad {
-    width: 130px;
-    height: 130px;
+    width: 140px;
+    height: 140px;
   }
   .dpad-btn {
-    width: 52px;
-    height: 52px;
-    font-size: 20px;
+    width: 56px;
+    height: 56px;
+    font-size: 22px;
   }
   .joystick {
     left: 0.6rem;
-    bottom: 5.6rem;
+    bottom: 0.6rem;
     width: 95px;
     height: 95px;
   }
@@ -1560,7 +1517,7 @@ select {
   .joystick {
     width: 100px;
     height: 100px;
-    bottom: 6.2rem;
+    bottom: 0.6rem;
   }
 }
 
@@ -1573,14 +1530,6 @@ select {
   }
 
   .sound-toggle:hover { transform: translate(-50%, -2px); }
-
-  #game-screen.active ~ .sound-toggle {
-    left: max(0.65rem, env(safe-area-inset-left));
-    bottom: calc(6.2rem + 108px);
-    transform: none;
-  }
-
-  #game-screen.active ~ .sound-toggle:hover { transform: translateY(-2px); }
 
   .hud-center {
     top: 0.3rem;
@@ -1596,7 +1545,7 @@ select {
   }
 }
 
-@media (max-height: 700px) {
+@media (max-height: 820px) {
   .menu-content,
   .lobby-panel,
   .modal-card,
@@ -1909,9 +1858,31 @@ html, body {
     padding: 1rem;
   }
 
+  /* Two columns so the whole menu fits a short landscape viewport. */
+  .menu-content {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    grid-template-areas:
+      "title name"
+      "title actions"
+      "banner banner";
+    gap: 0.5rem 1.2rem;
+    align-items: start;
+    width: min(94vw, 760px);
+    padding: 0.85rem 1.1rem;
+  }
+
+  .menu-content .title-block { grid-area: title; margin-bottom: 0; }
+  .menu-content .player-name-wrap { grid-area: name; margin-bottom: 0.5rem; }
+  .menu-content .menu-actions { grid-area: actions; }
+  .menu-content #offline-banner { grid-area: banner; margin-top: 0; }
+  .menu-content .menu-meta { display: none; }
+  .menu-content #menu-error { grid-column: 1 / -1; }
+
   .title-block { margin-bottom: 0.8rem; }
   .player-name-wrap { margin-bottom: 0.8rem; }
   .menu-actions { gap: 0.55rem; }
+  .offline-banner { padding: 0.55rem 0.7rem; font-size: 0.72rem; }
   .lobby-layout { gap: 0.6rem; }
   .room-box { margin-bottom: 0.6rem; padding: 0.65rem 0.8rem; }
   .lobby-header { margin-bottom: 0.65rem; }
@@ -1968,14 +1939,14 @@ html, body {
   }
 
   #controls-mobile .dpad {
-    width: clamp(104px, 34vh, 136px);
-    height: clamp(104px, 34vh, 136px);
+    width: clamp(112px, 36vh, 142px);
+    height: clamp(112px, 36vh, 142px);
   }
 
   #controls-mobile .dpad-btn {
-    width: clamp(42px, 13vh, 52px);
-    height: clamp(42px, 13vh, 52px);
-    font-size: clamp(18px, 6vh, 23px);
+    width: clamp(46px, 14vh, 56px);
+    height: clamp(46px, 14vh, 56px);
+    font-size: clamp(19px, 6vh, 24px);
   }
 
   .notification {
@@ -2174,3 +2145,98 @@ html, body {
     display: none;
   }
 }
+
+/* ===================== Responsive touch layout ===================== */
+/* Applied by game.js (body.touch-ui) only for real touch devices, so the
+   virtual controls keep their own corner on every screen size. */
+
+body.touch-ui #joystick {
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+body.touch-ui #controls-mobile {
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+body.touch-ui #minimap-wrap {
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 122px);
+}
+
+/* Portrait is fully playable now, so the rotate hint would only clutter. */
+body.touch-ui #portrait-warning {
+  display: none;
+}
+
+/* Sound button lives in the gap between the joystick and the D-pad. */
+body.touch-ui #game-screen.active ~ .sound-toggle {
+  left: 50%;
+  right: auto;
+  bottom: max(0.9rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+}
+
+body.touch-ui #game-screen.active ~ .sound-toggle:hover {
+  transform: translate(-50%, -2px);
+}
+
+@media (max-width: 600px) {
+  body.touch-ui .sound-toggle {
+    padding: 0.5rem;
+    border-radius: 999px;
+  }
+
+  body.touch-ui .sound-label {
+    display: none;
+  }
+
+  body.touch-ui #minimap-wrap {
+    display: none;
+  }
+}
+
+/* Compact menu so it fits small phones without overflowing. */
+.join-row input {
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .menu-content {
+    padding: 1.25rem 1rem;
+    border-radius: 14px;
+  }
+
+  .title-block {
+    margin-bottom: 1rem;
+  }
+
+  .player-name-wrap {
+    margin-bottom: 0.9rem;
+  }
+
+  .menu-actions {
+    gap: 0.6rem;
+  }
+
+  .btn {
+    padding: 0.8rem 1rem;
+    font-size: 0.72rem;
+  }
+
+  .join-row {
+    gap: 0.5rem;
+  }
+
+  .menu-meta {
+    font-size: 0.68rem;
+  }
+
+  .offline-banner {
+    margin-top: 0.8rem;
+    padding: 0.65rem 0.75rem;
+    font-size: 0.74rem;
+  }
+}
+

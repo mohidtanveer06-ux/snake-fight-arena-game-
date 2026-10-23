@@ -16,6 +16,11 @@ const Game = (() => {
   let inputTimerId = null;
   let animationFrame = null;
   let camera = { x: 0, y: 0 };
+  let zoom = 1;
+  const viewport = { width: 0, height: 0 };
+  const ZOOM_TARGET_SHORT = 620;
+  const ZOOM_MIN = 0.66;
+  const ZOOM_MAX = 1.65;
   let initialized = false;
   let socket = null;
   let offline = false;
@@ -32,14 +37,81 @@ const Game = (() => {
   let lastAliveStates = new Map();
 
   let swipeStart = null;
+  let touchMode = false;
+  let touchMedia = null;
+
+  function isCoarsePointer() {
+    try {
+      if (window.matchMedia) {
+        if (window.matchMedia('(pointer: coarse)').matches) return true;
+        if (window.matchMedia('(hover: none)').matches && window.matchMedia('(pointer: fine)').matches === false) return true;
+        return false;
+      }
+    } catch (e) {
+      // fall through to the legacy check
+    }
+    return 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0;
+  }
+
+  function setTouchMode(on) {
+    touchMode = !!on;
+    const cm = document.getElementById('controls-mobile');
+    const j = document.getElementById('joystick');
+    if (cm) cm.classList.toggle('hidden', !touchMode);
+    if (j) j.classList.toggle('hidden', !touchMode);
+    if (document.body) document.body.classList.toggle('touch-ui', touchMode);
+  }
+
+  function watchTouchMedia() {
+    if (!window.matchMedia) return;
+    try {
+      touchMedia = window.matchMedia('(pointer: coarse)');
+      const handler = (event) => {
+        // Only auto-hide when the device reports a non-touch pointer; a first
+        // touch is still handled by the pointerdown fallback below.
+        if (!event.matches && touchMode) {
+          const legacy = 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0;
+          if (!legacy) setTouchMode(false);
+        } else if (event.matches) {
+          setTouchMode(true);
+        }
+      };
+      if (touchMedia.addEventListener) touchMedia.addEventListener('change', handler);
+      else if (touchMedia.addListener) touchMedia.addListener(handler);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function viewW() {
+    return viewport.width / zoom;
+  }
+
+  function viewH() {
+    return viewport.height / zoom;
+  }
+
+  function computeZoom() {
+    const shortSide = Math.min(viewport.width, viewport.height) || 1;
+    zoom = clamp(shortSide / ZOOM_TARGET_SHORT, ZOOM_MIN, ZOOM_MAX);
+  }
 
   function resizeCanvas() {
+    const app = document.getElementById('app');
+    const rect = app ? app.getBoundingClientRect() : null;
+    const cssW = Math.max(1, Math.round((rect && rect.width) || window.innerWidth));
+    const cssH = Math.max(1, Math.round((rect && rect.height) || window.innerHeight));
+    viewport.width = cssW;
+    viewport.height = cssH;
+
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-    canvas.width = window.innerWidth * dpr;
-    canvas.height = window.innerHeight * dpr;
-    canvas.style.width = `${window.innerWidth}px`;
-    canvas.style.height = `${window.innerHeight}px`;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    computeZoom();
   }
 
   function emitInput() {
@@ -100,16 +172,20 @@ const Game = (() => {
   function updateCamera() {
     const player = getLocalPlayer();
     if (!player || !gameState) return;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const vw = viewW();
+    const vh = viewH();
     const arenaW = gameState.arena.width;
     const arenaH = gameState.arena.height;
-    const targetX = player.x - vw / 2;
-    const targetY = player.y - vh / 2;
+
+    const maxX = arenaW - vw;
+    const maxY = arenaH - vh;
+    const targetX = maxX <= 0 ? maxX / 2 : player.x - vw / 2;
+    const targetY = maxY <= 0 ? maxY / 2 : player.y - vh / 2;
+
     camera.x += (targetX - camera.x) * 0.15;
     camera.y += (targetY - camera.y) * 0.15;
-    camera.x = clamp(camera.x, 0, Math.max(0, arenaW - vw));
-    camera.y = clamp(camera.y, 0, Math.max(0, arenaH - vh));
+    camera.x = maxX <= 0 ? maxX / 2 : clamp(camera.x, 0, maxX);
+    camera.y = maxY <= 0 ? maxY / 2 : clamp(camera.y, 0, maxY);
   }
 
   function clamp(value, min, max) {
@@ -193,13 +269,13 @@ const Game = (() => {
 
     ctx.strokeStyle = 'rgba(85, 248, 255, 0.09)';
     const grid = 60;
-    for (let x = Math.floor(camera.x / grid) * grid; x < camera.x + window.innerWidth + grid; x += grid) {
+    for (let x = Math.floor(camera.x / grid) * grid; x < camera.x + viewW() + grid; x += grid) {
       ctx.beginPath();
       ctx.moveTo(x - camera.x, -camera.y);
       ctx.lineTo(x - camera.x, height - camera.y);
       ctx.stroke();
     }
-    for (let y = Math.floor(camera.y / grid) * grid; y < camera.y + window.innerHeight + grid; y += grid) {
+    for (let y = Math.floor(camera.y / grid) * grid; y < camera.y + viewH() + grid; y += grid) {
       ctx.beginPath();
       ctx.moveTo(-camera.x, y - camera.y);
       ctx.lineTo(width - camera.x, y - camera.y);
@@ -217,7 +293,7 @@ const Game = (() => {
     for (const crystal of gameState.crystals) {
       const x = crystal.x - camera.x;
       const y = crystal.y - camera.y;
-      if (x < -40 || x > window.innerWidth + 40 || y < -40 || y > window.innerHeight + 40) continue;
+      if (x < -40 || x > viewW() + 40 || y < -40 || y > viewH() + 40) continue;
       const pulse = 1 + Math.sin(Date.now() * 0.005 + crystal.x) * 0.18;
       ctx.save();
       ctx.translate(x, y);
@@ -241,7 +317,7 @@ const Game = (() => {
     for (const fragment of gameState.droppedEnergy) {
       const x = fragment.x - camera.x;
       const y = fragment.y - camera.y;
-      if (x < -30 || x > window.innerWidth + 30 || y < -30 || y > window.innerHeight + 30) continue;
+      if (x < -30 || x > viewW() + 30 || y < -30 || y > viewH() + 30) continue;
       const pulse = 1 + Math.sin(Date.now() * 0.008 + fragment.x * 0.01) * 0.2;
       ctx.beginPath();
       ctx.fillStyle = 'rgba(255, 209, 102, 0.9)';
@@ -259,7 +335,7 @@ const Game = (() => {
     for (const pu of gameState.powerUps) {
       const x = pu.x - camera.x;
       const y = pu.y - camera.y;
-      if (x < -60 || x > window.innerWidth + 60 || y < -60 || y > window.innerHeight + 60) continue;
+      if (x < -60 || x > viewW() + 60 || y < -60 || y > viewH() + 60) continue;
       const life = Math.max(0, 1 - (now - pu.spawnedAt) / 30000);
       const pulse = 1 + Math.sin(now * 0.006 + pu.x) * 0.2;
       ctx.save();
@@ -385,12 +461,14 @@ const Game = (() => {
     ctx.fill();
 
     ctx.fillStyle = '#fff';
-    ctx.font = '700 13px Rajdhani';
+    const nameSize = 13 / zoom;
+    ctx.font = `700 ${nameSize}px Rajdhani`;
     ctx.textAlign = 'center';
     ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-    ctx.lineWidth = 3;
-    ctx.strokeText(player.username, headX, headY - headRadius - 8);
-    ctx.fillText(player.username, headX, headY - headRadius - 8);
+    ctx.lineWidth = 3 / zoom;
+    const nameY = headY - headRadius - 8 / zoom;
+    ctx.strokeText(player.username, headX, nameY);
+    ctx.fillText(player.username, headX, nameY);
 
     if (hasShield) {
       const shieldPulse = 1 + Math.sin(now * 0.012) * 0.1;
@@ -452,13 +530,13 @@ const Game = (() => {
       miniCtx.globalAlpha = 1;
     }
 
-    const viewX = camera.x * scaleX;
-    const viewY = camera.y * scaleY;
-    const viewW = window.innerWidth * scaleX;
-    const viewH = window.innerHeight * scaleY;
+    const rectX = camera.x * scaleX;
+    const rectY = camera.y * scaleY;
+    const rectW = Math.min(width, viewW()) * scaleX;
+    const rectH = Math.min(height, viewH()) * scaleY;
     miniCtx.strokeStyle = 'rgba(255, 209, 102, 0.7)';
     miniCtx.lineWidth = 1;
-    miniCtx.strokeRect(viewX, viewY, viewW, viewH);
+    miniCtx.strokeRect(rectX, rectY, rectW, rectH);
   }
 
   function updateDirectionIndicatorFromState() {
@@ -560,11 +638,10 @@ const Game = (() => {
     updateCamera();
 
     ctx.save();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
     ctx.fillStyle = '#04060d';
-    ctx.fillRect(0, 0, vw, vh);
+    ctx.fillRect(0, 0, viewport.width, viewport.height);
 
+    ctx.scale(zoom, zoom);
     drawBackground();
     drawCrystals();
     drawDroppedEnergy();
@@ -902,7 +979,7 @@ const Game = (() => {
     }
 
     canvas.addEventListener('pointerdown', (e) => {
-      if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+      if (e.pointerType === 'touch' || touchMode || 'ontouchstart' in window || navigator.maxTouchPoints > 0) {
         swipeStart = { x: e.clientX, y: e.clientY, time: Date.now() };
       }
     });
@@ -1036,12 +1113,16 @@ const Game = (() => {
         resizeCanvas();
       }, 200);
     });
-    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-      const cm = document.getElementById('controls-mobile');
-      if (cm) cm.classList.remove('hidden');
-      const j = document.getElementById('joystick');
-      if (j) j.classList.remove('hidden');
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', resizeCanvas);
     }
+
+    setTouchMode(isCoarsePointer());
+    watchTouchMedia();
+    window.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'touch' && !touchMode) setTouchMode(true);
+    }, { passive: true });
+
     window.addEventListener('beforeunload', () => {
       if (inputTimerId) clearInterval(inputTimerId);
     });
